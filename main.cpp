@@ -1,7 +1,7 @@
 #include "lexer/lexer.h"
 #include "parser/parser.h"
 #include "semantic/semantic.h"
-#include "ir/irgen.cpp"
+#include "ir/irgen.h"
 #include "codegen/codegen.h"
 #include <fstream>
 #include <iostream>
