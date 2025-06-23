@@ -1,12 +1,11 @@
 #pragma once
-#include "../lexer/lexer.h"
+#include "lexer/lexer.h"
 #include "ast.h"
+#include <vector>
+#include <memory>
 
-class Parser {
-public:
-    Parser(const std::vector<Token>& tokens);
-    ExprPtr parse_expression();  // 示例函数
-private:
-    const std::vector<Token>& tokens_;
-    int current_;
-};
+namespace parser {
+
+std::shared_ptr<ast::Program> parse(const std::vector<lexer::Token>& tokens);
+
+} // namespace parser

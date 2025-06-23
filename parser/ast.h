@@ -1,16 +1,40 @@
 #pragma once
-#include <memory>
 #include <string>
+#include <memory>
 #include <vector>
 
-// 示例：表达式节点基类
+namespace ast {
+
 struct Expr {
     virtual ~Expr() = default;
 };
 
-using ExprPtr = std::shared_ptr<Expr>;
-
 struct IntLiteral : public Expr {
     int value;
-    IntLiteral(int v) : value(v) {}
 };
+
+struct BinaryExpr : public Expr {
+    std::string op;
+    std::shared_ptr<Expr> lhs, rhs;
+};
+
+struct Stmt {
+    virtual ~Stmt() = default;
+};
+
+struct ReturnStmt : public Stmt {
+    std::shared_ptr<Expr> expr;
+};
+
+struct Function {
+    std::string name;
+    std::vector<std::string> params;
+    std::vector<std::shared_ptr<Stmt>> body;
+};
+
+struct Program {
+    std::vector<std::shared_ptr<Function>> functions;
+};
+
+} // namespace ast
+
