@@ -11,6 +11,7 @@ struct Expr {
 
 struct IntLiteral : public Expr {
     int value;
+    IntLiteral(int v) : value(v) {}  
 };
 
 struct BinaryExpr : public Expr {
@@ -33,8 +34,11 @@ struct Function {
 };
 
 struct Program {
-    std::vector<std::shared_ptr<Function>> functions;
-};
-
+    std::vector<std::shared_ptr<Function>> functions;  // 存储函数列表
+    std::vector<std::shared_ptr<Expr>> expressions;    // 存储全局表达式列表
+    Program(
+        std::vector<std::shared_ptr<Function>> funcs,
+        std::vector<std::shared_ptr<Expr>> exprs
+    ) : functions(std::move(funcs)), expressions(std::move(exprs)) {}};
 } // namespace ast
 
