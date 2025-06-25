@@ -1,0 +1,35 @@
+// complex.toyc - 复杂表达式和控制流
+int max(int a, int b) {
+    if (a > b) {
+        return a;
+    }
+    return b;
+}
+
+int abs(int x) {
+    if (x < 0) {
+        return -x;
+    }
+    return x;
+}
+
+int main() {
+    int a = 10;
+    int b = -20;
+    int c = 15;
+    
+    int result = max(abs(a - b), c);
+    
+    int i = 0;
+    while (i < 5) {
+        result = result + i;
+        
+        if (result > 50) {
+            break;
+        }
+        
+        i = i + 1;
+    }
+    
+    return result;
+}

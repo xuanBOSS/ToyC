@@ -1,17 +1,28 @@
+// Lexer.h
 #pragma once
-#include <string>
+#include "Token.h"
 #include <vector>
+#include <string>
+#include <unordered_map>
 
-namespace lexer {
+class Lexer {
+private:
+    std::string source;
+    int position = 0;
+    int line = 1;
+    int column = 1;
+    std::unordered_map<std::string, TokenType> keywords;
 
-enum class TokenType { Identifier, Keyword, Number, Symbol, Operator, String, EndOfFile };
-
-struct Token {
-    TokenType type;
-    std::string lexeme;
-    int line, column;
+public:
+    Lexer(const std::string& source);
+    std::vector<Token> tokenize();
+    
+private:
+    char peek(int offset = 0) const;
+    char advance();
+    bool isAtEnd() const;
+    void skipWhitespace();
+    Token scanToken();
+    Token scanIdentifier();
+    Token scanNumber();
 };
-
-std::vector<Token> tokenize(const std::string& source);
-
-} // namespace lexer

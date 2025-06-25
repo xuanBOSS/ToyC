@@ -1,8 +1,15 @@
-// ==== test/sample.toyc ====
-int add(int a, int b) {
-    return a + b;
-}
 
+// sample.toyc - 基本运算示例
 int main() {
-    return add(2, 3);
+    int a = 10;
+    int b = 5;
+    int c = a + b * 2;
+    
+    if (c > 15) {
+        c = c - 5;
+    } else {
+        c = c + 5;
+    }
+    
+    return c;
 }
