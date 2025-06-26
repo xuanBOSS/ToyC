@@ -1,8 +1,17 @@
 #include "lexer.h"
 #include <cctype>
+#include <iostream>
+#include <stdexcept>
 
-Lexer::Lexer(const std::string& source) : source(source), position(0), line(1), column(1) {
-    // åˆå§‹åŒ–å…³é”®å­—æ˜ å°„è¡¨
+/*
+ * Lexer ÀàµÄ¹¹Ôìº¯Êı
+ * ³õÊ¼»¯´Ê·¨·ÖÎöÆ÷µÄ×´Ì¬ºÍ¹Ø¼ü×ÖÓ³Éä±í
+ * @param source Ô´´úÂë×Ö·û´®
+*/
+
+// Ä¬ÈÏ¹¹Ôìº¯Êı
+Lexer::Lexer() : source(""), position(0), line(1), column(1) {
+    // ³õÊ¼»¯¹Ø¼ü×ÖÓ³Éä±í
     keywords["int"] = TokenType::INT;
     keywords["void"] = TokenType::VOID;
     keywords["if"] = TokenType::IF;
@@ -11,24 +20,77 @@ Lexer::Lexer(const std::string& source) : source(source), position(0), line(1), 
     keywords["break"] = TokenType::BREAK;
     keywords["continue"] = TokenType::CONTINUE;
     keywords["return"] = TokenType::RETURN;
+
+    // ³õÊ¼»¯ÔËËã·ûÓ³Éä±í
+    initOperators();
+}
+Lexer::Lexer(const std::string& source) : source(source), position(0), line(1), column(1) {
+    // ³õÊ¼»¯¹Ø¼ü×ÖÓ³Éä±í
+    keywords["int"] = TokenType::INT;
+    keywords["void"] = TokenType::VOID;
+    keywords["if"] = TokenType::IF;
+    keywords["else"] = TokenType::ELSE;
+    keywords["while"] = TokenType::WHILE;
+    keywords["break"] = TokenType::BREAK;
+    keywords["continue"] = TokenType::CONTINUE;
+    keywords["return"] = TokenType::RETURN;
+
+    // ³õÊ¼»¯ÔËËã·ûÓ³Éä±í
+    initOperators();
 }
 
+// ³õÊ¼»¯ÔËËã·ûÓ³Éä±í
+void Lexer::initOperators() {
+    operators["="] = TokenType::ASSIGN;
+    operators["+"] = TokenType::PLUS;
+    operators["-"] = TokenType::MINUS;
+    operators["*"] = TokenType::MULTIPLY;
+    operators["/"] = TokenType::DIVIDE;
+    operators["%"] = TokenType::MODULO;
+    operators["<"] = TokenType::LT;
+    operators[">"] = TokenType::GT;
+    operators["<="] = TokenType::LE;
+    operators[">="] = TokenType::GE;
+    operators["=="] = TokenType::EQ;
+    operators["!="] = TokenType::NEQ;
+    operators["&&"] = TokenType::AND;
+    operators["||"] = TokenType::OR;
+    operators["!"] = TokenType::NOT;
+    operators["("] = TokenType::LPAREN;
+    operators[")"] = TokenType::RPAREN;
+    operators["{"] = TokenType::LBRACE;
+    operators["}"] = TokenType::RBRACE;
+    operators[";"] = TokenType::SEMICOLON;
+    operators[","] = TokenType::COMMA;
+}
+
+/*
+ * ½«Ô´´úÂë×ª»»Îª±ê¼ÇĞòÁĞ
+ * @return °üº¬ËùÓĞ±ê¼ÇµÄÏòÁ¿
+*/
 std::vector<Token> Lexer::tokenize() {
     std::vector<Token> tokens;
-    
+    // Ñ­»·Ö±µ½´¦ÀíÍêËùÓĞÔ´´úÂë
     while (!isAtEnd()) {
+        // Ìø¹ı¿Õ°××Ö·ûºÍ×¢ÊÍ
         skipWhitespace();
         if (isAtEnd()) break;
-        
+
+        // »ñÈ¡ÏÂÒ»¸ö±ê¼Ç²¢Ìí¼Óµ½ĞòÁĞÖĞ
         Token token = scanToken();
         tokens.push_back(token);
     }
-    
-    // æ·»åŠ æ–‡ä»¶ç»“æŸæ ‡è®°
+
+    // Ìí¼ÓÎÄ¼ş½áÊø±ê¼Ç
     tokens.push_back(Token(TokenType::END_OF_FILE, "", line, column));
     return tokens;
 }
 
+/*
+ * ²é¿´µ±Ç°Î»ÖÃÏòÇ°Æ«ÒÆÁ¿µÄ×Ö·û£¬²»¸Ä±äµ±Ç°Î»ÖÃ
+ * @param offset ÏòÇ°µÄÆ«ÒÆÁ¿
+ * @return Æ«ÒÆÎ»ÖÃµÄ×Ö·û£¬Èç¹û³¬³ö·¶Î§Ôò·µ»Ø '\0'
+*/
 char Lexer::peek(int offset) const {
     if (position + offset >= source.length()) {
         return '\0';
@@ -36,172 +98,308 @@ char Lexer::peek(int offset) const {
     return source[position + offset];
 }
 
+/*
+ * ¶ÁÈ¡µ±Ç°×Ö·û²¢½«Î»ÖÃÇ°½øÒ»²½
+ * @return µ±Ç°×Ö·û
+*/
 char Lexer::advance() {
     char current = source[position++];
+    // ¸üĞÂĞĞÁĞĞÅÏ¢
     if (current == '\n') {
         line++;
         column = 1;
-    } else {
+    }
+    else {
         column++;
     }
     return current;
 }
 
+
+/*
+ * ¼ì²éÊÇ·ñÒÑµ½´ïÔ´´úÂëµÄÄ©Î²
+ * @return Èç¹ûµ½´ïÄ©Î²Ôò·µ»Ø true£¬·ñÔò·µ»Ø false
+*/
 bool Lexer::isAtEnd() const {
     return position >= source.length();
 }
 
+/*
+ * Ìø¹ı¿Õ°××Ö·ûºÍ×¢ÊÍ
+ * ´¦Àí¿Õ¸ñ¡¢ÖÆ±í·û¡¢»Ø³µ·û¡¢»»ĞĞ·ûÒÔ¼°µ¥ĞĞºÍ¶àĞĞ×¢ÊÍ
+*/
 void Lexer::skipWhitespace() {
     while (!isAtEnd()) {
         char c = peek();
         switch (c) {
-            case ' ':
-            case '\t':
-            case '\r':
-                advance();
-                break;
-            case '\n':
-                advance();
-                break;
-            case '/':
-                if (peek(1) == '/') {
-                    // å•è¡Œæ³¨é‡Š
-                    while (peek() != '\n' && !isAtEnd()) {
-                        advance();
-                    }
-                } else if (peek(1) == '*') {
-                    // å¤šè¡Œæ³¨é‡Š
-                    advance(); // è·³è¿‡ /
-                    advance(); // è·³è¿‡ *
-                    
-                    while (!isAtEnd() && !(peek() == '*' && peek(1) == '/')) {
-                        advance();
-                    }
-                    
-                    if (!isAtEnd()) {
-                        advance(); // è·³è¿‡ *
-                        advance(); // è·³è¿‡ /
-                    }
-                } else {
-                    return;
-                }
-                break;
-            default:
+            //¿Õ°××Ö·û
+        case ' ':
+        case '\t':
+        case '\r':
+            advance();
+            break;
+        case '\n':
+            advance();
+            break;
+
+        case '/':
+            if (peek(1) == '/' || peek(1) == '*') {
+                skipComment();
+            }
+            else {
                 return;
+            }
+            break;
+        default:
+            return;
         }
     }
 }
 
+// Ìø¹ı×¢ÊÍ
+void Lexer::skipComment() {
+    char c = peek();
+    if (c == '/') {
+        // µ¥ĞĞ×¢ÊÍ
+        if (peek(1) == '/') {
+            position += 2;
+            column += 2;
+            while (!isAtEnd() && peek() != '\n') {
+                advance();
+            }
+        }
+        // ¶àĞĞ×¢ÊÍ
+        else if (peek(1) == '*') {
+            position += 2;
+            column += 2;
+            while (!isAtEnd()) {
+                if (peek() == '*' && peek(1) == '/') {
+                    position += 2;
+                    column += 2;
+                    break;
+                }
+                if (peek() == '\n') {
+                    line++;
+                    column = 1;
+                    position++;
+                }
+                else {
+                    position++;
+                    column++;
+                }
+            }
+        }
+    }
+}
+
+
+/*
+ * É¨Ãè²¢·µ»ØÏÂÒ»¸ö±ê¼Ç
+ * Ö÷Òª¸ºÔğÈ·¶¨µ±Ç°Î»ÖÃµÄ×Ö·ûÀàĞÍ²¢µ÷ÓÃÏàÓ¦µÄ×¨ÓÃÉ¨Ãèº¯Êı
+ * @return ÏÂÒ»¸ö±ê¼Ç
+*/
 Token Lexer::scanToken() {
     char c = advance();
-    
-    // æ ‡è¯†ç¬¦
+
+    // ±êÊ¶·û»ò¹Ø¼ü×Ö£¨ÒÔ×ÖÄ¸»òÏÂ»®Ïß¿ªÍ·£©
     if (isalpha(c) || c == '_') {
-        position--; // å›é€€ä¸€æ­¥ï¼Œè®©scanIdentifierå¤„ç†
+        position--; // »ØÍËÒ»²½£¬ÈÃscanIdentifier´¦Àí
         column--;
         return scanIdentifier();
     }
-    
-    // æ•°å­—
+
+    // Êı×Ö£¨ÒÔÊı×Ö¿ªÍ·£©
     if (isdigit(c)) {
-        position--; // å›é€€ä¸€æ­¥ï¼Œè®©scanNumberå¤„ç†
+        position--; // »ØÍËÒ»²½£¬ÈÃscanNumber´¦Àí
         column--;
         return scanNumber();
     }
-    
+    //¼ÇÂ¼µ±Ç°±ê¼ÇµÄĞĞÁĞÎ»ÖÃ
     int tokenLine = line;
-    int tokenColumn = column - 1; // è°ƒæ•´åˆ—å·ï¼Œå› ä¸ºadvanceå·²ç»å¢åŠ äº†
-    
+    int tokenColumn = column - 1; // µ÷ÕûÁĞºÅ£¬ÒòÎªadvanceÒÑ¾­Ôö¼ÓÁË
+
+    //´¦Àí¸÷ÖÖ·ûºÅ
     switch (c) {
-        case '(': return Token(TokenType::LPAREN, "(", tokenLine, tokenColumn);
-        case ')': return Token(TokenType::RPAREN, ")", tokenLine, tokenColumn);
-        case '{': return Token(TokenType::LBRACE, "{", tokenLine, tokenColumn);
-        case '}': return Token(TokenType::RBRACE, "}", tokenLine, tokenColumn);
-        case ';': return Token(TokenType::SEMICOLON, ";", tokenLine, tokenColumn);
-        case ',': return Token(TokenType::COMMA, ",", tokenLine, tokenColumn);
-        
-        case '+': return Token(TokenType::PLUS, "+", tokenLine, tokenColumn);
-        case '-': return Token(TokenType::MINUS, "-", tokenLine, tokenColumn);
-        case '*': return Token(TokenType::MULTIPLY, "*", tokenLine, tokenColumn);
-        case '%': return Token(TokenType::MODULO, "%", tokenLine, tokenColumn);
-        
-        case '=':
-            if (peek() == '=') {
-                advance();
-                return Token(TokenType::EQ, "==", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::ASSIGN, "=", tokenLine, tokenColumn);
-            
-        case '!':
-            if (peek() == '=') {
-                advance();
-                return Token(TokenType::NEQ, "!=", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::NOT, "!", tokenLine, tokenColumn);
-            
-        case '<':
-            if (peek() == '=') {
-                advance();
-                return Token(TokenType::LE, "<=", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::LT, "<", tokenLine, tokenColumn);
-            
-        case '>':
-            if (peek() == '=') {
-                advance();
-                return Token(TokenType::GE, ">=", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::GT, ">", tokenLine, tokenColumn);
-            
-        case '&':
-            if (peek() == '&') {
-                advance();
-                return Token(TokenType::AND, "&&", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::UNKNOWN, "&", tokenLine, tokenColumn);
-            
-        case '|':
-            if (peek() == '|') {
-                advance();
-                return Token(TokenType::OR, "||", tokenLine, tokenColumn);
-            }
-            return Token(TokenType::UNKNOWN, "|", tokenLine, tokenColumn);
-            
-        case '/':
-            return Token(TokenType::DIVIDE, "/", tokenLine, tokenColumn);
+        //µ¥×Ö·û±ê¼Ç
+    case '(': return Token(TokenType::LPAREN, "(", tokenLine, tokenColumn);
+    case ')': return Token(TokenType::RPAREN, ")", tokenLine, tokenColumn);
+    case '{': return Token(TokenType::LBRACE, "{", tokenLine, tokenColumn);
+    case '}': return Token(TokenType::RBRACE, "}", tokenLine, tokenColumn);
+    case ';': return Token(TokenType::SEMICOLON, ";", tokenLine, tokenColumn);
+    case ',': return Token(TokenType::COMMA, ",", tokenLine, tokenColumn);
+
+        //ËãÊõÔËËã·û
+    case '+': return Token(TokenType::PLUS, "+", tokenLine, tokenColumn);
+    case '-': return Token(TokenType::MINUS, "-", tokenLine, tokenColumn);
+    case '*': return Token(TokenType::MULTIPLY, "*", tokenLine, tokenColumn);
+    case '%': return Token(TokenType::MODULO, "%", tokenLine, tokenColumn);
+
+        // ¿ÉÄÜÊÇµ¥×Ö·û»òË«×Ö·ûµÄÔËËã·û
+    case '=':
+        if (peek() == '=') {
+            advance();
+            return Token(TokenType::EQ, "==", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::ASSIGN, "=", tokenLine, tokenColumn);
+
+    case '!':
+        if (peek() == '=') {
+            advance();
+            return Token(TokenType::NEQ, "!=", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::NOT, "!", tokenLine, tokenColumn);
+
+    case '<':
+        if (peek() == '=') {
+            advance();
+            return Token(TokenType::LE, "<=", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::LT, "<", tokenLine, tokenColumn);
+
+    case '>':
+        if (peek() == '=') {
+            advance();
+            return Token(TokenType::GE, ">=", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::GT, ">", tokenLine, tokenColumn);
+
+    case '&':
+        if (peek() == '&') {
+            advance();
+            return Token(TokenType::AND, "&&", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::UNKNOWN, "&", tokenLine, tokenColumn);
+
+    case '|':
+        if (peek() == '|') {
+            advance();
+            return Token(TokenType::OR, "||", tokenLine, tokenColumn);
+        }
+        return Token(TokenType::UNKNOWN, "|", tokenLine, tokenColumn);
+
+    case '/':
+        return Token(TokenType::DIVIDE, "/", tokenLine, tokenColumn);
     }
-    
+
+    //Î´Ê¶±ğµÄ×Ö·û
     return Token(TokenType::UNKNOWN, std::string(1, c), tokenLine, tokenColumn);
 }
 
+/*
+ * É¨Ãè±êÊ¶·û»ò¹Ø¼ü×Ö
+ * Ê¶±ğÒÔ×ÖÄ¸»òÏÂ»®Ïß¿ªÍ·£¬ºó¸ú×ÖÄ¸¡¢Êı×Ö»òÏÂ»®ÏßµÄĞòÁĞ
+ * @return ±êÊ¶·û»ò¹Ø¼ü×ÖµÄ±ê¼Ç
+*/
 Token Lexer::scanIdentifier() {
     int startPos = position;
     int startColumn = column;
     int startLine = line;
-    
+
+    // µÚÒ»¸ö×Ö·û±ØĞëÊÇ×ÖÄ¸»òÏÂ»®Ïß
+    if (isalpha(peek()) || peek() == '_') {
+        advance();
+    }
+
+    // ºóĞø×Ö·û¿ÉÒÔÊÇ×ÖÄ¸¡¢Êı×Ö»òÏÂ»®Ïß
     while (!isAtEnd() && (isalnum(peek()) || peek() == '_')) {
         advance();
     }
-    
+
+    //ÌáÈ¡´ÊËØ
     std::string lexeme = source.substr(startPos, position - startPos);
-    
-    // æ£€æŸ¥æ˜¯å¦æ˜¯å…³é”®å­—
+
+    // ¼ì²éÊÇ·ñÊÇ¹Ø¼ü×Ö
     if (keywords.find(lexeme) != keywords.end()) {
         return Token(keywords[lexeme], lexeme, startLine, startColumn);
     }
-    
+
+    //²»ÊÇ¹Ø¼ü×Ö£¬ÔòÊÇ±êÊ¶·û
     return Token(TokenType::IDENTIFIER, lexeme, startLine, startColumn);
 }
 
+/*
+ * É¨ÃèÊı×Ö
+ * Ê¶±ğÓÉÊı×Ö×é³ÉµÄĞòÁĞ
+ * @return Êı×ÖµÄ±ê¼Ç
+*/
 Token Lexer::scanNumber() {
     int startPos = position;
     int startColumn = column;
     int startLine = line;
-    
+
+    // ¶ÁÈ¡ËùÓĞÁ¬ĞøµÄÊı×Ö×Ö·û
     while (!isAtEnd() && isdigit(peek())) {
         advance();
     }
-    
+
+    // ÌáÈ¡´ÊËØ
     std::string lexeme = source.substr(startPos, position - startPos);
     return Token(TokenType::NUMBER, lexeme, startLine, startColumn);
+}
+
+// ¶ÁÈ¡ÔËËã·û»ò±êµã·ûºÅ
+Token Lexer::readOperatorOrPunctuator() {
+    int start = position;
+    int startLine = line;
+    int startColumn = column;
+
+    char c = peek();
+    position++;
+    column++;
+
+    // ¼ì²éË«×Ö·û·ûºÅ
+    if (position < source.length()) {
+        char next = peek();
+        std::string twoCharOp = std::string(1, c) + next;
+        if (operators.find(twoCharOp) != operators.end()) {
+            position++;
+            column++;
+            return Token(operators.at(twoCharOp), twoCharOp, startLine, startColumn);
+        }
+    }
+
+    // µ¥×Ö·û·ûºÅ
+    std::string singleCharOp = std::string(1, c);
+    if (operators.find(singleCharOp) != operators.end()) {
+        return Token(operators.at(singleCharOp), singleCharOp, startLine, startColumn);
+    }
+
+    // Î´Öª·ûºÅ
+    return Token(TokenType::UNKNOWN, singleCharOp, startLine, startColumn);
+}
+
+// »ñÈ¡ÏÂÒ»¸ö±ê¼Ç
+Token Lexer::nextToken() {
+    while (true) {
+        // Ìø¹ı¿Õ¸ñ¡¢ÖÆ±í¡¢»»ĞĞ¡¢»Ø³µ·û
+        skipWhitespace();
+        // ¼ì²éÊÇ·ñÒÑµ½Ä©Î²
+        if (isAtEnd()) {
+            return Token(TokenType::END_OF_FILE, "", line, column);
+        }
+
+        // Ê¹ÓÃÔ­ÓĞµÄscanTokenº¯ÊıÀ´»ñÈ¡ÏÂÒ»¸ö±ê¼Ç
+        return scanToken();
+    }
+}
+
+// ²é¿´ÏÂÒ»¸ö±ê¼Çµ«²»ÏûºÄËü
+Token Lexer::peekToken() {
+    int savedPosition = position;
+    int savedLine = line;
+    int savedColumn = column;
+
+    Token token = nextToken();
+
+    position = savedPosition;
+    line = savedLine;
+    column = savedColumn;
+
+    return token;
+}
+
+// ´ø²ÎÊıµÄ±ê¼Ç»¯º¯Êı
+std::vector<Token> Lexer::tokenize(const std::string& source) {
+    Lexer lexer(source);
+    return lexer.tokenize();
 }

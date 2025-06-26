@@ -1,33 +1,34 @@
-// Token.h
 #pragma once
 #include <string>
 
 enum class TokenType {
-    // å…³é”®å­—
+    //¹Ø¼ü×Ö
     INT, VOID, IF, ELSE, WHILE, BREAK, CONTINUE, RETURN,
-    
-    // æ ‡è¯†ç¬¦å’Œå­—é¢é‡
+
+    //±êÊ¶·ûºÍ×ÖÃæÁ¿
     IDENTIFIER, NUMBER,
-    
-    // è¿ç®—ç¬¦
+
+    //ÔËËã·û
     PLUS, MINUS, MULTIPLY, DIVIDE, MODULO,
-    ASSIGN, 
+    ASSIGN,
     EQ, NEQ, LT, GT, LE, GE,
     AND, OR, NOT,
-    
-    // åˆ†éš”ç¬¦
+
+    //·Ö¸ô·û
     LPAREN, RPAREN, LBRACE, RBRACE, SEMICOLON, COMMA,
-    
-    // å…¶ä»–
+
+    //ÆäËû
     END_OF_FILE, UNKNOWN
 };
 
-struct Token {
-    TokenType type;
-    std::string lexeme;
-    int line;
-    int column;
-    
+struct Token 
+{
+    TokenType type;    //tokenÀàĞÍ
+    std::string lexeme;//tokenÄÚÈİ
+    int line;          //ËùÔÚĞĞºÅ
+    int column;        //ËùÔÚÁĞºÅ
+
     Token(TokenType type, const std::string& lexeme, int line, int column)
-        : type(type), lexeme(lexeme), line(line), column(column) {}
+        : type(type), lexeme(lexeme), line(line), column(column) 
+    {}
 };
