@@ -7,19 +7,25 @@
 #include <memory>
 #include <stdexcept>
 
+//用于在语法分析过程中抛出特定的解析错误
 class ParseError : public std::runtime_error {
 public:
     ParseError(const std::string& message) : std::runtime_error(message) {}
 };
 
+//实现了一个自顶向下的语法分析器，根据文法规则解析Token序列生成AST
 class Parser {
 private:
     std::vector<Token> tokens;
     int current = 0;
+    bool hadError = false;  // 添加一个标记，记录是否遇到过错误
+    int errorCount = 0;  // 添加错误计数
+    bool isRecovering = false;  // 标记是否正在从错误中恢复
 
 public:
     Parser(const std::vector<Token>& tokens) : tokens(tokens) {}
     std::shared_ptr<CompUnit> parse();
+    bool hasError() const { return hadError; }  // 公共方法返回是否有错误
 
 private:
     // 辅助方法
