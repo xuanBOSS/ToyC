@@ -190,66 +190,6 @@ public:
     std::string toString() const override;
 };
 
-// IR生成器
-class IRGenerator : public ASTVisitor {
-private:
-    std::vector<std::shared_ptr<IRInstr>> instructions;
-    int tempCount = 0;
-    int labelCount = 0;
-    std::map<std::string, std::shared_ptr<Operand>> variables;
-    std::string currentFunction;
-    
-    // 操作数栈，用于表达式计算
-    std::vector<std::shared_ptr<Operand>> operandStack;
-
-public:
-    IRGenerator() {}
-    
-    // 获取生成的IR指令序列
-    const std::vector<std::shared_ptr<IRInstr>>& getInstructions() const { 
-        return instructions; 
-    }
-    
-    // 生成IR
-    void generate(std::shared_ptr<CompUnit> ast);
-    
-    // 辅助方法
-    std::shared_ptr<Operand> createTemp();
-    std::shared_ptr<Operand> createLabel();
-    void addInstruction(std::shared_ptr<IRInstr> instr);
-    
-    // 返回栈顶操作数
-    std::shared_ptr<Operand> getTopOperand();
-    
-    // 实现ASTVisitor接口
-    void visit(NumberExpr& expr) override;
-    void visit(VariableExpr& expr) override;
-    void visit(BinaryExpr& expr) override;
-    void visit(UnaryExpr& expr) override;
-    void visit(CallExpr& expr) override;
-    
-    void visit(ExprStmt& stmt) override;
-    void visit(VarDeclStmt& stmt) override;
-    void visit(AssignStmt& stmt) override;
-    void visit(BlockStmt& stmt) override;
-    void visit(IfStmt& stmt) override;
-    void visit(WhileStmt& stmt) override;
-    void visit(BreakStmt& stmt) override;
-    void visit(ContinueStmt& stmt) override;
-    void visit(ReturnStmt& stmt) override;
-    
-    void visit(FunctionDef& funcDef) override;
-    void visit(CompUnit& compUnit) override;
-    
-private:
-    // 用于break和continue语句的标签栈
-    std::vector<std::string> breakLabels;
-    std::vector<std::string> continueLabels;
-    
-    // 获取或创建变量操作数
-    std::shared_ptr<Operand> getVariable(const std::string& name);
-};
-
 // IR输出器
 class IRPrinter {
 public:
