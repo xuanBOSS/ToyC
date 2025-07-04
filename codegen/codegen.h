@@ -28,6 +28,9 @@ private:
     std::vector<int> prologueIndices;         // 记录每个函数序言行的下标
     std::vector<int> stackSizes;              // 记录每个函数的stackSize
 
+    std::map<std::string, int> tempRegMap; // 临时变量名 -> a寄存器编号
+    int nextAReg = 0; // 下一个可用a寄存器编号
+
 public:
     CodeGenerator(const std::string& outputFile, const std::vector<std::shared_ptr<IRInstr>>& instructions);
     ~CodeGenerator();
@@ -64,4 +67,5 @@ private:
     
     // 获取操作数的存储位置
     int getOperandOffset(const std::shared_ptr<Operand>& op);
+    int getOperandReg(const std::shared_ptr<Operand>& op);
 };

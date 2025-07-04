@@ -113,101 +113,98 @@ void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
 
 void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr) {
     emitComment(instr->toString());
-    
-    // 加载左操作数到a0
-    loadOperand(instr->left, "a0");
-    
-    // 加载右操作数到a1
-    loadOperand(instr->right, "a1");
-    
-    // 根据操作码生成相应的指令
+
+    int leftReg = getOperandReg(instr->left);
+    int rightReg = getOperandReg(instr->right);
+    int resultReg = getOperandReg(instr->result);
+
+    loadOperand(instr->left, "a" + std::to_string(leftReg));
+    loadOperand(instr->right, "a" + std::to_string(rightReg));
+
+    std::string dst = "a" + std::to_string(resultReg);
+    std::string src1 = "a" + std::to_string(leftReg);
+    std::string src2 = "a" + std::to_string(rightReg);
+
     switch (instr->opcode) {
         case OpCode::ADD:
-            emitInstruction("add a0, a0, a1");
+            emitInstruction("add " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::SUB:
-            emitInstruction("sub a0, a0, a1");
+            emitInstruction("sub " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::MUL:
-            emitInstruction("mul a0, a0, a1");
+            emitInstruction("mul " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::DIV:
-            emitInstruction("div a0, a0, a1");
+            emitInstruction("div " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::MOD:
-            emitInstruction("rem a0, a0, a1");
+            emitInstruction("rem " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::LT:
-            emitInstruction("slt a0, a0, a1");
+            emitInstruction("slt " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::GT:
-            emitInstruction("slt a0, a1, a0");
+            emitInstruction("slt " + dst + ", " + src2 + ", " + src1);
             break;
         case OpCode::LE:
-            emitInstruction("slt a0, a1, a0");
-            emitInstruction("xori a0, a0, 1");
+            emitInstruction("slt " + dst + ", " + src2 + ", " + src1);
+            emitInstruction("xori " + dst + ", " + dst + ", 1");
             break;
         case OpCode::GE:
-            emitInstruction("slt a0, a0, a1");
-            emitInstruction("xori a0, a0, 1");
+            emitInstruction("slt " + dst + ", " + src1 + ", " + src2);
+            emitInstruction("xori " + dst + ", " + dst + ", 1");
             break;
         case OpCode::EQ:
-            emitInstruction("xor a0, a0, a1");
-            emitInstruction("seqz a0, a0");
+            emitInstruction("xor " + dst + ", " + src1 + ", " + src2);
+            emitInstruction("seqz " + dst + ", " + dst);
             break;
         case OpCode::NE:
-            emitInstruction("xor a0, a0, a1");
-            emitInstruction("snez a0, a0");
+            emitInstruction("xor " + dst + ", " + src1 + ", " + src2);
+            emitInstruction("snez " + dst + ", " + dst);
             break;
         case OpCode::AND:
-            emitInstruction("snez a0, a0");
-            emitInstruction("snez a1, a1");
-            emitInstruction("and a0, a0, a1");
+            emitInstruction("snez " + src1 + ", " + src1);
+            emitInstruction("snez " + src2 + ", " + src2);
+            emitInstruction("and " + dst + ", " + src1 + ", " + src2);
             break;
         case OpCode::OR:
-            emitInstruction("or a0, a0, a1");
-            emitInstruction("snez a0, a0");
+            emitInstruction("or " + dst + ", " + src1 + ", " + src2);
+            emitInstruction("snez " + dst + ", " + dst);
             break;
         default:
             std::cerr << "Error: Unknown binary operation" << std::endl;
             break;
     }
-    
-    // 存储结果到目标操作数
-    storeRegister("a0", instr->result);
+
+    // 不需要 storeRegister，结果已经在 resultReg 对应的寄存器中
 }
 
 void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
     emitComment(instr->toString());
     
-    // 加载操作数到a0
-    loadOperand(instr->operand, "a0");
-    
-    // 根据操作码生成相应的指令
+    int resultReg = getOperandReg(instr->result);
+    loadOperand(instr->operand, "a" + std::to_string(resultReg));
     switch (instr->opcode) {
         case OpCode::NEG:
-            emitInstruction("neg a0, a0");
+            emitInstruction("neg a" + std::to_string(resultReg) + ", a" + std::to_string(resultReg));
             break;
         case OpCode::NOT:
-            emitInstruction("seqz a0, a0");
+            emitInstruction("seqz a" + std::to_string(resultReg) + ", a" + std::to_string(resultReg));
             break;
         default:
             std::cerr << "Error: Unknown unary operation" << std::endl;
             break;
     }
-    
-    // 存储结果到目标操作数
-    storeRegister("a0", instr->result);
+    storeRegister("a" + std::to_string(resultReg), instr->result);
 }
 
 void CodeGenerator::processAssign(const std::shared_ptr<AssignInstr>& instr) {
     emitComment(instr->toString());
     
-    // 加载源操作数到a0
-    loadOperand(instr->source, "a0");
-    
-    // 存储a0到目标操作数
-    storeRegister("a0", instr->target);
+    int resultReg = getOperandReg(instr->target);
+    loadOperand(instr->source, "a" + std::to_string(resultReg));
+    storeRegister("a" + std::to_string(resultReg), instr->target);
 }
 
 void CodeGenerator::processGoto(const std::shared_ptr<GotoInstr>& instr) {
@@ -219,12 +216,9 @@ void CodeGenerator::processGoto(const std::shared_ptr<GotoInstr>& instr) {
 
 void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
     emitComment(instr->toString());
-    
-    // 加载条件到a0
-    loadOperand(instr->condition, "a0");
-    
-    // 如果条件为真（非零），则跳转到目标标签
-    emitInstruction("bnez a0, " + instr->target->name);
+    int condReg = getOperandReg(instr->condition);
+    loadOperand(instr->condition, "a" + std::to_string(condReg));
+    emitInstruction("bnez a" + std::to_string(condReg) + ", " + instr->target->name);
 }
 
 void CodeGenerator::processParam(const std::shared_ptr<ParamInstr>& instr) {
@@ -295,6 +289,8 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     currentFunction = instr->funcName;
     stackSize = 0;
     localVars.clear();
+
+    //临时寄存器的分配可能需要清理
 
     // 生成函数标签
     output << "\t.global " << instr->funcName << "\n";
@@ -401,4 +397,18 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
     
     // 更新函数序言中的栈大小
     return offset;
+}
+
+int CodeGenerator::getOperandReg(const std::shared_ptr<Operand>& op) {
+    if (op->type == OperandType::TEMP) {
+        auto it = tempRegMap.find(op->name);
+        if (it != tempRegMap.end()) {
+            return it->second;
+        }
+        int reg = nextAReg++;
+        tempRegMap[op->name] = reg;
+        return reg;
+    }
+    // 对于变量或参数，可以选择始终用a0或分配新寄存器
+    return 0; // 默认a0
 }

@@ -34,9 +34,19 @@
 - 参数、作用域、变量管理自动处理
 - 支持 IR 优化接口，可扩展更多优化器
 
-## 典型 IR 示例
+## 待优化部分
 
-```text
-t0 = a + b
-t1 = t0 + c
-d = t1
+- **IR 优化尚未实现**：如常量折叠、死代码删除、公共子表达式消除等优化功能暂未集成。
+- **更丰富的控制流优化**：如基本块划分、跳转优化等可进一步完善。
+- **SSA 形式与寄存器分配接口**：如需支持更高级的后端优化，可考虑引入 SSA 形式和寄存器分配相关接口。
+
+## 典型用法
+
+```cpp
+IRGenerator irgen;
+irgen.generate(ast);
+const auto& ir = irgen.getInstructions();
+IRPrinter printer;
+printer.print(ir);
+```
+
