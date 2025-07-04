@@ -29,18 +29,20 @@ void CodeGenerator::generate() {
     for (const auto& instr : instructions) {
         processInstruction(instr);
     }
+    for (const auto& line : codeBuffer) {
+        output << line;
+    }
 }
 
 std::string CodeGenerator::genLabel() {
     return "L" + std::to_string(labelCount++);
 }
 
-void CodeGenerator::emitComment(const std::string& comment) {
-    output << "\t# " << comment << "\n";
-}
-
 void CodeGenerator::emitInstruction(const std::string& instr) {
-    output << "\t" << instr << "\n";
+    codeBuffer.push_back("\t" + instr + "\n");
+}
+void CodeGenerator::emitComment(const std::string& comment) {
+    codeBuffer.push_back("\t# " + comment + "\n");
 }
 
 void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
@@ -226,36 +228,50 @@ void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
 }
 
 void CodeGenerator::processParam(const std::shared_ptr<ParamInstr>& instr) {
-    emitComment(instr->toString());
-    
-    // 处理函数参数，这里我们假设参数是通过栈传递的
-    // 在调用过程中会用到这些参数
-    
-    // 将参数加载到a0
-    loadOperand(instr->param, "a0");
-    
-    // 将参数压入栈中（由CALL指令处理）
-    // 这里只需要记录参数即可
+    paramBuffer.push_back(instr->param);
 }
 
 void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     emitComment(instr->toString());
-    
-    // 调用函数前需要保存调用者保存的寄存器
+
+    // 加载参数到寄存器（a0-a7）或栈（如果参数超过8个）
+    int n = paramBuffer.size();
+    for (int i = 0; i < n; ++i) {
+        int idx = n - 1 - i;
+        if (idx < 8) {
+            loadOperand(paramBuffer[i], "a" + std::to_string(idx));
+        } else {
+            loadOperand(paramBuffer[i], "a0");
+            emitInstruction("addi sp, sp, -4");
+            emitInstruction("sw a0, 0(sp)");
+        }
+    }
+    paramBuffer.clear();
+
+    // 调用前需要保存调用者保存的寄存器
     emitInstruction("sw ra, -4(sp)");
     emitInstruction("addi sp, sp, -4");
-    
+
     // 调用函数
     emitInstruction("call " + instr->funcName);
-    
-    // 恢复寄存器
+
+    // 调用后恢复sp（如果有栈上传递的参数，需要弹栈）
+    int stackParamCount = (n > 8) ? (n - 8) : 0;
+    if (stackParamCount > 0) {
+        emitInstruction("addi sp, sp, " + std::to_string(stackParamCount * 4));
+    }
+
+    // 恢复ra
     emitInstruction("addi sp, sp, 4");
     emitInstruction("lw ra, -4(sp)");
-    
+
     // 如果有返回值，存储a0到结果操作数
     if (instr->result) {
         storeRegister("a0", instr->result);
     }
+
+    // 重置参数计数器
+    paramCount = 0;
 }
 
 void CodeGenerator::processReturn(const std::shared_ptr<ReturnInstr>& instr) {
@@ -279,18 +295,35 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     currentFunction = instr->funcName;
     stackSize = 0;
     localVars.clear();
-    
+
     // 生成函数标签
     output << "\t.global " << instr->funcName << "\n";
     output << instr->funcName << ":\n";
-    
+
     // 函数序言
     emitComment("Function prologue");
     emitInstruction("sw ra, -4(sp)");
     emitInstruction("sw fp, -8(sp)");
     emitInstruction("addi fp, sp, -4");
-    emitInstruction("addi sp, sp, -8");  // 临时保存空间大小，后面会更新
-    
+    prologueIndices.push_back(codeBuffer.size());
+    stackSizes.push_back(0); // 先占位，后续更新
+    emitInstruction("addi sp, sp, -8"); // 占位
+
+    // 保存参数到局部变量（栈空间）
+    int paramNum = instr->paramNames.size();
+    for (int i = 0; i < paramNum; ++i) {
+        int offset = getOperandOffset(std::make_shared<Operand>(OperandType::VARIABLE, instr->paramNames[i]));
+        if (i < 8) {
+            // 前8个参数：a0~a7
+            emitInstruction("sw a" + std::to_string(i) + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            // 第9个及以上参数：从fp偏移取出
+            int stackOffset = 8 + (i - 8) * 4; // 跳过ra和fp
+            emitInstruction("lw a0, " + std::to_string(stackOffset) + "(fp)");
+            emitInstruction("sw a0, " + std::to_string(offset) + "(fp)");
+        }
+    }
+
     // 后续在函数体中会根据局部变量调整栈大小
 }
 
@@ -304,6 +337,13 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
     emitInstruction("lw fp, -4(fp)");
     emitInstruction("lw ra, 0(fp)");
     emitInstruction("ret");
+    
+    // 回填当前函数的序言
+    int idx = prologueIndices.back();
+    prologueIndices.pop_back();
+    int totalSize = 8 + stackSize;
+    codeBuffer[idx] = "\taddi sp, sp, -" + std::to_string(totalSize) + "\n";
+    stackSizes.pop_back();
     
     // 添加一行空行以提高可读性
     output << "\n";

@@ -172,10 +172,11 @@ public:
 class FunctionBeginInstr : public IRInstr {
 public:
     std::string funcName;
-    
-    FunctionBeginInstr(const std::string& funcName)
-        : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName) {}
-    
+    std::vector<std::string> paramNames; // 新增：参数名列表
+
+    FunctionBeginInstr(const std::string& funcName, const std::vector<std::string>& paramNames = {})
+        : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName), paramNames(paramNames) {}
+
     std::string toString() const override;
 };
 
@@ -196,8 +197,10 @@ private:
     std::vector<std::shared_ptr<IRInstr>> instructions;
     int tempCount = 0;
     int labelCount = 0;
-    std::map<std::string, std::shared_ptr<Operand>> variables;
+    //std::map<std::string, std::shared_ptr<Operand>> variables;
+    std::vector<std::map<std::string, std::shared_ptr<Operand>>> scopeStack; // 符号表栈
     std::string currentFunction;
+    std::string currentFunctionReturnType; // 当前函数的返回类型，用于检查 return 语句  
     
     // 操作数栈，用于表达式计算
     std::vector<std::shared_ptr<Operand>> operandStack;
@@ -248,6 +251,12 @@ private:
     
     // 获取或创建变量操作数
     std::shared_ptr<Operand> getVariable(const std::string& name);
+    // 进入新作用域
+    void enterScope();
+    // 退出当前作用域
+    void exitScope();
+    // 辅助函数，递归判断一个语句是否所有路径都 return
+    bool allPathsReturn(const std::shared_ptr<Stmt>& stmt);
 };
 
 // IR输出器

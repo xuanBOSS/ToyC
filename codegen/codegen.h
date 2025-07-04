@@ -21,6 +21,13 @@ private:
     // IR指令列表
     const std::vector<std::shared_ptr<IRInstr>>& instructions;
 
+    int paramCount = 0; // 当前参数编号
+    std::vector<std::shared_ptr<Operand>> paramBuffer; // 缓存参数列表
+
+    std::vector<std::string> codeBuffer;      // 缓存所有输出行
+    std::vector<int> prologueIndices;         // 记录每个函数序言行的下标
+    std::vector<int> stackSizes;              // 记录每个函数的stackSize
+
 public:
     CodeGenerator(const std::string& outputFile, const std::vector<std::shared_ptr<IRInstr>>& instructions);
     ~CodeGenerator();

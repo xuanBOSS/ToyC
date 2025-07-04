@@ -140,15 +140,35 @@ std::shared_ptr<Operand> IRGenerator::getTopOperand() {
 }
 
 std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name) {
-    auto it = variables.find(name);
-    if (it != variables.end()) {
-        return it->second;
+    // 从栈顶向下查找
+    for (auto it = scopeStack.rbegin(); it != scopeStack.rend(); ++it) {
+        auto found = it->find(name);
+        if (found != it->end()) {
+            return found->second;
+        }
     }
-    
-    // 如果变量不存在，创建一个新的
-    std::shared_ptr<Operand> var = std::make_shared<Operand>(OperandType::VARIABLE, name);
-    variables[name] = var;
-    return var;
+    std::cerr << "Error: Variable '" << name << "' used before declaration" << std::endl;
+    // 可以选择抛异常或返回 nullptr
+    return nullptr;
+}
+
+// 辅助函数，递归判断一个语句是否所有路径都 return
+bool IRGenerator::allPathsReturn(const std::shared_ptr<Stmt>& stmt) {
+    if (auto block = std::dynamic_pointer_cast<BlockStmt>(stmt)) {
+        for (const auto& s : block->statements) {
+            if (allPathsReturn(s)) return true;
+        }
+        return false;
+    }
+    if (auto ret = std::dynamic_pointer_cast<ReturnStmt>(stmt)) {
+        return true;
+    }
+    if (auto ifs = std::dynamic_pointer_cast<IfStmt>(stmt)) {
+        if (!ifs->elseBranch) return false;
+        return allPathsReturn(ifs->thenBranch) && allPathsReturn(ifs->elseBranch);
+    }
+    // while/for 语句一般不能保证所有路径 return
+    return false;
 }
 
 // 访问方法实现
@@ -159,6 +179,7 @@ void IRGenerator::visit(NumberExpr& expr) {
 
 void IRGenerator::visit(VariableExpr& expr) {
     std::shared_ptr<Operand> var = getVariable(expr.name);
+    if (!var) return; // 错误已输出
     operandStack.push_back(var);
 }
 
@@ -197,17 +218,21 @@ void IRGenerator::visit(BinaryExpr& expr) {
 void IRGenerator::visit(UnaryExpr& expr) {
     expr.operand->accept(*this);
     std::shared_ptr<Operand> operand = getTopOperand();
-    
+
+    if (expr.op == "+") {
+        // 一元加号，直接返回操作数本身
+        operandStack.push_back(operand);
+        return;
+    }
+
     std::shared_ptr<Operand> result = createTemp();
-    
     OpCode opcode;
     if (expr.op == "-") opcode = OpCode::NEG;
     else if (expr.op == "!") opcode = OpCode::NOT;
     else {
         std::cerr << "Error: Unknown unary operator: " << expr.op << std::endl;
-        opcode = OpCode::NEG; // 默认使用取负
+        opcode = OpCode::NEG;
     }
-    
     addInstruction(std::make_shared<UnaryOpInstr>(opcode, result, operand));
     operandStack.push_back(result);
 }
@@ -234,22 +259,30 @@ void IRGenerator::visit(CallExpr& expr) {
 }
 
 void IRGenerator::visit(ExprStmt& stmt) {
-    if (stmt.expression) {
-        stmt.expression->accept(*this);
-        // 表达式语句的结果会被丢弃
-        if (!operandStack.empty()) {
-            operandStack.pop_back();
-        }
+    if (!stmt.expression) {
+        // 空语句，什么都不做
+        return;
+    }
+    stmt.expression->accept(*this);
+    // 表达式语句的结果会被丢弃
+    if (!operandStack.empty()) {
+        operandStack.pop_back();
     }
 }
 
 void IRGenerator::visit(VarDeclStmt& stmt) {
-    std::shared_ptr<Operand> var = getVariable(stmt.name);
-    
+    // 检查当前作用域是否已声明同名变量
+    if (!scopeStack.empty() && scopeStack.back().count(stmt.name)) {
+        std::cerr << "Error: Variable '" << stmt.name << "' redeclared in the same scope" << std::endl;
+        return;
+    }
+    std::shared_ptr<Operand> var = std::make_shared<Operand>(OperandType::VARIABLE, stmt.name);
+    if (!scopeStack.empty()) {
+        scopeStack.back()[stmt.name] = var;
+    }
     if (stmt.initializer) {
         stmt.initializer->accept(*this);
         std::shared_ptr<Operand> value = getTopOperand();
-        
         addInstruction(std::make_shared<AssignInstr>(var, value));
     }
 }
@@ -264,9 +297,11 @@ void IRGenerator::visit(AssignStmt& stmt) {
 }
 
 void IRGenerator::visit(BlockStmt& stmt) {
+    enterScope();
     for (const auto& s : stmt.statements) {
         s->accept(*this);
     }
+    exitScope();
 }
 
 void IRGenerator::visit(IfStmt& stmt) {
@@ -358,6 +393,12 @@ void IRGenerator::visit(ContinueStmt&) {
 }
 
 void IRGenerator::visit(ReturnStmt& stmt) {
+    if (currentFunctionReturnType == "void" && stmt.value) {
+        std::cerr << "Error: void function should not return a value" << std::endl;
+    }
+    if (currentFunctionReturnType != "void" && !stmt.value) {
+        std::cerr << "Error: non-void function must return a value" << std::endl;
+    }
     if (stmt.value) {
         stmt.value->accept(*this);
         std::shared_ptr<Operand> value = getTopOperand();
@@ -369,26 +410,34 @@ void IRGenerator::visit(ReturnStmt& stmt) {
 }
 
 void IRGenerator::visit(FunctionDef& funcDef) {
-    currentFunction = funcDef.name;
-    
-    // 函数开始
-    addInstruction(std::make_shared<FunctionBeginInstr>(funcDef.name));
-    
-    // 函数参数
+    // 收集参数名
+    std::vector<std::string> paramNames;
     for (const auto& param : funcDef.params) {
-        getVariable(param.name); // 确保参数变量被创建
+        paramNames.push_back(param.name);
     }
-    
-    // 函数体
+
+    // 传递参数名列表给 FunctionBeginInstr
+    addInstruction(std::make_shared<FunctionBeginInstr>(funcDef.name, paramNames));
+
+    currentFunction = funcDef.name;
+    currentFunctionReturnType = funcDef.returnType;
+    enterScope();
+
+    for (const auto& param : funcDef.params) {
+        getVariable(param.name);
+    }
     funcDef.body->accept(*this);
-    
-    // 确保有返回指令
+    exitScope();
+
+    // return 路径完整性检查
+    if (funcDef.returnType != "void" && !allPathsReturn(funcDef.body)) {
+        std::cerr << "Error: Not all paths in function '" << funcDef.name << "' return a value" << std::endl;
+    }
     if (funcDef.returnType == "void") {
         addInstruction(std::make_shared<ReturnInstr>());
     }
-    
-    // 函数结束
     addInstruction(std::make_shared<FunctionEndInstr>(funcDef.name));
+    currentFunctionReturnType.clear();
 }
 
 void IRGenerator::visit(CompUnit& compUnit) {
@@ -404,4 +453,12 @@ void IRPrinter::print(const std::vector<std::shared_ptr<IRInstr>>& instructions,
     for (const auto& instr : instructions) {
         out << instr->toString() << "\n";
     }
+}
+
+void IRGenerator::enterScope() {
+    scopeStack.push_back({});
+}
+
+void IRGenerator::exitScope() {
+    scopeStack.pop_back();
 }
