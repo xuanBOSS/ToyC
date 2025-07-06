@@ -28,4 +28,3 @@ public:
     virtual void visit(FunctionDef& funcDef) = 0;
     virtual void visit(CompUnit& compUnit) = 0;
 };
-

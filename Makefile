@@ -9,7 +9,18 @@ SRC = $(wildcard */*.cpp) main.cpp
 OBJ = $(SRC:.cpp=.o)
 
 # 输出可执行文件名
-TARGET = toycc
+#TARGET = toycc
+
+# 系统检测
+ifeq ($(OS),Windows_NT)
+    RM = cmd /C del /Q /F
+    CLEAN_FILES = $(TARGET) $(subst /,\,$(OBJ)) *.s *.ir
+	TARGET = toycc.exe
+else
+    RM = rm -f
+    CLEAN_FILES = $(TARGET) $(OBJ) *.s *.ir
+	TARGET = toycc
+endif
 
 # 默认目标
 all: $(TARGET)
@@ -24,11 +35,16 @@ $(TARGET): $(OBJ)
 
 # 清理目标
 clean:
-	rm -f $(TARGET) $(OBJ) *.s *.ir
+	$(RM) $(CLEAN_FILES)
+	@echo Clean complete
+
+# 清理目标
+#clean:
+#	rm -f $(TARGET) $(OBJ) *.s *.ir
 
 # 运行测试
 test: all
-	./$(TARGET) test/sample.toyc sample.s
+	./$(TARGET) test/t_semantic.toyc t_semantic.s
 
 # 伪目标
 .PHONY: all clean test

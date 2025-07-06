@@ -1,0 +1,39 @@
+void func1(int a)
+{
+    a=3;
+}
+
+int func2(int b,int c)
+{
+    return 0;
+}
+
+void func3()
+{
+    int aa=8;
+    return func1(aa);
+}
+
+int main()
+{
+    int x=3;
+    int y=4;
+    int i=1;
+
+    int z=y%0;
+
+    {
+        int x=6;
+    }
+
+    while(func2(1,2))
+    {
+        y=y+1;
+        if(y==8)
+        {
+            break;
+        }
+    }
+
+    return 0;
+}
