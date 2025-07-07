@@ -1,6 +1,7 @@
 #pragma once
 #include "ir.h"
 #include "parser/ast.h"
+#include "parser/astVisitor.h"
 #include "semantic/semantic.h"
 #include <string>
 #include <vector>
@@ -30,6 +31,7 @@ private:
     int labelCount = 0;
     std::map<std::string, std::shared_ptr<Operand>> variables;
     std::string currentFunction;
+    std::string currentFunctionReturnType; // 当前函数的返回类型，用于检查 return 语句
     
     // 操作数栈，用于表达式计算
     std::vector<std::shared_ptr<Operand>> operandStack;
@@ -135,6 +137,9 @@ private:
     
     // 获取控制流指令的目标标签
     std::vector<std::string> getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const;
+
+    // 辅助函数，递归判断一个语句是否所有路径都 return
+    bool allPathsReturn(const std::shared_ptr<Stmt>& stmt);
 };
 
 // IR优化器接口
@@ -160,29 +165,6 @@ private:
     std::vector<bool> findLiveInstructions(const std::vector<std::shared_ptr<IRInstr>>& instructions);
     bool isInstructionLive(const std::shared_ptr<IRInstr>& instr, 
                           const std::map<std::string, bool>& liveVars);
-};
-
-// IR分析器 - 提供IR指令分析工具
-class IRAnalyzer {
-public:
-    // 查找定义特定操作数的指令
-    static int findDefinition(const std::vector<std::shared_ptr<IRInstr>>& instructions, 
-                             const std::string& operandName);
-                             
-    // 查找使用特定操作数的指令
-    static std::vector<int> findUses(const std::vector<std::shared_ptr<IRInstr>>& instructions, 
-                                   const std::string& operandName);
-                                   
-    // 检查变量是否活跃
-    static bool isVariableLive(const std::vector<std::shared_ptr<IRInstr>>& instructions,
-                              const std::string& varName,
-                              int position);
-                              
-    // 获取指令定义的变量
-    static std::vector<std::string> getDefinedVariables(const std::shared_ptr<IRInstr>& instr);
-    
-    // 获取指令使用的变量
-    static std::vector<std::string> getUsedVariables(const std::shared_ptr<IRInstr>& instr);
 };
 
 // IR到RISC-V汇编代码生成器接口

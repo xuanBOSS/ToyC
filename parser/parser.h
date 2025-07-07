@@ -1,5 +1,4 @@
 // parser/parser.h
-// Parser.h
 #pragma once
 #include "lexer/Token.h"
 #include "parser/ast.h"

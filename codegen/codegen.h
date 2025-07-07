@@ -81,7 +81,8 @@ public:
     
     // 生成代码
     void generate();
-    
+    void processInstructionToStream(const std::shared_ptr<IRInstr>& instr, std::ostream& stream);
+
     // 添加优化规则
     void addPeepholePattern(const std::string& pattern, 
                            std::function<bool(std::vector<std::string>&)> handler);
@@ -90,19 +91,11 @@ private:
      // 生成标签
     std::string genLabel();
     
-    // 输出注释
+    // 输出函数
     void emitComment(const std::string& comment);
-    
-    // 输出指令
     void emitInstruction(const std::string& instr);
-    
-    // 输出标签
     void emitLabel(const std::string& label);
-    
-    // 输出全局声明
     void emitGlobal(const std::string& name);
-    
-    // 输出节区
     void emitSection(const std::string& section);
     
     // 处理IR指令
@@ -121,67 +114,37 @@ private:
     void processFunctionBegin(const std::shared_ptr<FunctionBeginInstr>& instr);
     void processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& instr);
     
-    // 加载操作数到寄存器
+    // 操作数和寄存器处理
     void loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg);
-    
-    // 存储寄存器到操作数
     void storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op);
-    
-    // 获取操作数的存储位置
     int getOperandOffset(const std::shared_ptr<Operand>& op);
-
-    // 分配一个临时寄存器
     std::string allocTempReg();
-    
-    // 释放临时寄存器
     void freeTempReg(const std::string& reg);
     
-    // 保存所有调用者保存的寄存器
+    // 寄存器保存和恢复
     void saveCallerSavedRegs();
-    
-    // 恢复所有调用者保存的寄存器
     void restoreCallerSavedRegs();
-    
-    // 保存所有被调用者保存的寄存器
     void saveCalleeSavedRegs();
-    
-    // 恢复所有被调用者保存的寄存器
     void restoreCalleeSavedRegs();
     
-    // 初始化寄存器信息
+    // 寄存器管理
     void initializeRegisters();
-    
-    // 执行寄存器分配
     void allocateRegisters();
-    
-    // 生成函数序言
-    void emitPrologue(const std::string& funcName);
-    
-    // 生成函数后记
-    void emitEpilogue(const std::string& funcName);
-    
-    // 优化栈布局
-    void optimizeStackLayout();
-    
-    // 窥孔优化
-    void peepholeOptimize(std::vector<std::string>& instructions);
-    
-    // 线性扫描寄存器分配
-    void linearScanRegisterAllocation();
-    
-    // 图着色寄存器分配
-    void graphColoringRegisterAllocation();
-    
-    // 检查是否是有效的RISC-V寄存器名
     bool isValidRegister(const std::string& reg) const;
-    
-    // 获取参数寄存器
     std::string getArgRegister(int paramIndex) const;
     
-    // 分析变量的生命周期
-    void analyzeVariableLifetimes();
+    // 函数管理
+    void emitPrologue(const std::string& funcName);
+    void emitEpilogue(const std::string& funcName);
     
-    // 创建冲突图
+    // 优化方法
+    void optimizeStackLayout();
+    void peepholeOptimize(std::vector<std::string>& instructions);
+    void linearScanRegisterAllocation();
+    void graphColoringRegisterAllocation();
+    
+    // 分析方法
+    void analyzeVariableLifetimes(std::map<std::string, std::pair<int, int>>& varLifetimes);
     std::map<std::string, std::set<std::string>> buildInterferenceGraph();
 };
 

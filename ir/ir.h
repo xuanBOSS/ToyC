@@ -172,6 +172,7 @@ public:
 class FunctionBeginInstr : public IRInstr {
 public:
     std::string funcName;
+    std::vector<std::string> paramNames; // 新增：参数名列表
     
     FunctionBeginInstr(const std::string& funcName)
         : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName) {}
@@ -190,8 +191,32 @@ public:
     std::string toString() const override;
 };
 
+
 // IR输出器
 class IRPrinter {
 public:
     static void print(const std::vector<std::shared_ptr<IRInstr>>& instructions, std::ostream& out);
+};
+
+// IR分析器 - 提供IR指令分析工具
+class IRAnalyzer {
+public:
+    // 查找定义特定操作数的指令
+    static int findDefinition(const std::vector<std::shared_ptr<IRInstr>>& instructions, 
+                             const std::string& operandName);
+                             
+    // 查找使用特定操作数的指令
+    static std::vector<int> findUses(const std::vector<std::shared_ptr<IRInstr>>& instructions, 
+                                   const std::string& operandName);
+                                   
+    // 检查变量是否活跃
+    static bool isVariableLive(const std::vector<std::shared_ptr<IRInstr>>& instructions,
+                              const std::string& varName,
+                              int position);
+                              
+    // 获取指令定义的变量
+    static std::vector<std::string> getDefinedVariables(const std::shared_ptr<IRInstr>& instr);
+    
+    // 获取指令使用的变量
+    static std::vector<std::string> getUsedVariables(const std::shared_ptr<IRInstr>& instr);
 };

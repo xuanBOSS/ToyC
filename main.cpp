@@ -2,6 +2,7 @@
 #include "parser/parser.h"
 #include "semantic/semantic.h"
 #include "ir/ir.h"
+#include "ir/irgen.h"
 #include "codegen/codegen.h"
 #include <fstream>
 #include <iostream>

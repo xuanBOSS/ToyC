@@ -107,6 +107,10 @@ std::shared_ptr<CompUnit> Parser::parse() {
 std::shared_ptr<CompUnit> Parser::compUnit() {
     std::vector<std::shared_ptr<FunctionDef>> functions;
 
+    // 获取编译单元的起始位置（第一个 token）
+    int line = peek(0).line;
+    int column = peek(0).column;
+
     while (!isAtEnd()) {
         isRecovering = false; // 确保每个新函数定义开始时都不处于恢复状态
 
@@ -131,7 +135,7 @@ std::shared_ptr<CompUnit> Parser::compUnit() {
         }
     }
 
-    return std::make_shared<CompUnit>(functions);
+    return std::make_shared<CompUnit>(functions, line, column);
 }
 
 //解析函数定义(functionDef)
@@ -139,6 +143,9 @@ std::shared_ptr<CompUnit> Parser::compUnit() {
 //params → param {',' param}
 //param → 'int' IDENT
 std::shared_ptr<FunctionDef> Parser::funcDef() {
+    // 记录函数定义的起始位置
+    int line = peek(0).line;
+    int column = peek(0).column;
     // 1. 解析返回类型
     std::string returnTypeStr;
     if (match({ TokenType::INT })) {
@@ -242,18 +249,23 @@ std::shared_ptr<FunctionDef> Parser::funcDef() {
         return nullptr;
     }
 
-    return std::make_shared<FunctionDef>(returnTypeStr, name, params, body);
+    return std::make_shared<FunctionDef>(returnTypeStr, name, params, body, line, column);
 }
 
 //解析函数参数
 Param Parser::param() {
+    int line = peek(0).line;
+    int column = peek(0).column;
+
     consume(TokenType::INT, "Parameter type must be 'int'.");
     Token name = consume(TokenType::IDENTIFIER, "Expected parameter name.");
-    return Param(name.lexeme);
+    return Param(name.lexeme, line, column);
 }
 
 //解析代码块,block → '{' {stmt} '}'
 std::shared_ptr<BlockStmt> Parser::block() {
+    int line = peek(0).line;
+    int column = peek(0).column;
     try {
         consume(TokenType::LBRACE, "Expected '{' before block.");
     }
@@ -287,7 +299,7 @@ std::shared_ptr<BlockStmt> Parser::block() {
         synchronize();
     }
 
-    return std::make_shared<BlockStmt>(statements);
+    return std::make_shared<BlockStmt>(statements, line, column);
 }
 
 //解析语句
@@ -345,6 +357,9 @@ std::shared_ptr<Stmt> Parser::stmt() {
 
 //解析表达式语句,exprStmt → expr ';'
 std::shared_ptr<Stmt> Parser::exprStmt() {
+    int line = peek(0).line;
+    int column = peek(0).column;
+    
     auto expression = expr();
     consume(TokenType::SEMICOLON, "Expected ';' after expression.");
     return std::make_shared<ExprStmt>(expression);
@@ -352,6 +367,9 @@ std::shared_ptr<Stmt> Parser::exprStmt() {
 
 //解析变量声明语句,varDeclStmt → 'int' IDENT '=' expr ';'
 std::shared_ptr<Stmt> Parser::varDeclStmt() {
+    int line = peek(0).line;
+    int column = peek(0).column;
+
     Token name = consume(TokenType::IDENTIFIER, "Expected variable name after 'int'.");
     
     // 必须有初始化器
@@ -359,22 +377,28 @@ std::shared_ptr<Stmt> Parser::varDeclStmt() {
     auto initializer = expr();
     
     consume(TokenType::SEMICOLON, "Expected ';' after variable declaration.");
-    return std::make_shared<VarDeclStmt>(name.lexeme, initializer);
+    return std::make_shared<VarDeclStmt>(name.lexeme, initializer, line, column);
 }
 
 //解析赋值语句,assignStmt → IDENT '=' expr ';'
 std::shared_ptr<Stmt> Parser::assignStmt() {
+    int line = peek(0).line;
+    int column = peek(0).column;
+
     Token name = consume(TokenType::IDENTIFIER, "Expected variable name.");
     consume(TokenType::ASSIGN, "Expected '=' after variable name.");
     
     auto value = expr();
     
     consume(TokenType::SEMICOLON, "Expected ';' after assignment.");
-    return std::make_shared<AssignStmt>(name.lexeme, value);
+    return std::make_shared<AssignStmt>(name.lexeme, value, line, column);
 }
 
 //解析if语句,ifStmt → 'if' '(' expr ')' stmt ['else' stmt]
 std::shared_ptr<Stmt> Parser::ifStmt() {
+    int line = previous().line;  // 'if' token 的位置
+    int column = previous().column;
+
     consume(TokenType::LPAREN, "Expected '(' after 'if'.");
     auto condition = expr();
     consume(TokenType::RPAREN, "Expected ')' after if condition.");
@@ -386,41 +410,51 @@ std::shared_ptr<Stmt> Parser::ifStmt() {
         elseBranch = stmt();
     }
     
-    return std::make_shared<IfStmt>(condition, thenBranch, elseBranch);
+    return std::make_shared<IfStmt>(condition, thenBranch, elseBranch, line, column);
 }
 
 //解析while语句,whileStmt → 'while' '(' expr ')' stmt
 std::shared_ptr<Stmt> Parser::whileStmt() {
+    int line = previous().line;  // 'while' token 的位置
+    int column = previous().column;
     consume(TokenType::LPAREN, "Expected '(' after 'while'.");
     auto condition = expr();
     consume(TokenType::RPAREN, "Expected ')' after while condition.");
     
     auto body = stmt();
     
-    return std::make_shared<WhileStmt>(condition, body);
+    return std::make_shared<WhileStmt>(condition, body, line, column);
 }
 
 //解析break语句,breakStmt → 'break' ';'
 std::shared_ptr<Stmt> Parser::breakStmt() {
+    int line = previous().line;  // 'break' token 的位置
+    int column = previous().column;
+
     consume(TokenType::SEMICOLON, "Expected ';' after 'break'.");
-    return std::make_shared<BreakStmt>();
+    return std::make_shared<BreakStmt>(line, column);
 }
 
 //解析continue语句,continueStmt → 'continue' ';'
 std::shared_ptr<Stmt> Parser::continueStmt() {
+    int line = previous().line;  // 'continue' token 的位置
+    int column = previous().column;
     consume(TokenType::SEMICOLON, "Expected ';' after 'continue'.");
-    return std::make_shared<ContinueStmt>();
+    return std::make_shared<ContinueStmt>(line, column);
 }
 
 //解析return语句,returnStmt → 'return' [expr] ';'
 std::shared_ptr<Stmt> Parser::returnStmt() {
+    int line = previous().line;  // 'return' token 的位置
+    int column = previous().column;
+
     std::shared_ptr<Expr> value = nullptr;
     if (!check(TokenType::SEMICOLON)) {
         value = expr();
     }
     
     consume(TokenType::SEMICOLON, "Expected ';' after return value.");
-    return std::make_shared<ReturnStmt>(value);
+    return std::make_shared<ReturnStmt>(value, line, column);
 }
 
 // 表达式解析示例实现,expr → lorExpr
@@ -487,8 +521,10 @@ std::shared_ptr<Expr> Parser::mulExpr() {
     
     while (match({TokenType::MULTIPLY, TokenType::DIVIDE, TokenType::MODULO})) {
         std::string op = previous().lexeme;
+        int line = previous().line;
+        int column = previous().column;
         auto right = unaryExpr();
-        expr = std::make_shared<BinaryExpr>(expr, op, right);
+        expr = std::make_shared<BinaryExpr>(expr, op, right, line, column);
     }
     
     return expr;
@@ -498,8 +534,10 @@ std::shared_ptr<Expr> Parser::mulExpr() {
 std::shared_ptr<Expr> Parser::unaryExpr() {
     if (match({TokenType::PLUS, TokenType::MINUS, TokenType::NOT})) {
         std::string op = previous().lexeme;
+        int line = previous().line;
+        int column = previous().column;
         auto right = unaryExpr();
-        return std::make_shared<UnaryExpr>(op, right);
+        return std::make_shared<UnaryExpr>(op, right, line, column);
     }
     
     return primaryExpr();
@@ -514,11 +552,15 @@ std::shared_ptr<Expr> Parser::unaryExpr() {
 std::shared_ptr<Expr> Parser::primaryExpr() {
     if (match({TokenType::NUMBER})) {
         int value = std::stoi(previous().lexeme);
-        return std::make_shared<NumberExpr>(value);
+        int line = previous().line;
+        int column = previous().column;
+        return std::make_shared<NumberExpr>(value, line, column);
     }
     
     if (match({TokenType::IDENTIFIER})) {
         std::string name = previous().lexeme;
+        int line = previous().line;
+        int column = previous().column;
         
         // 检查是否是函数调用
         if (match({TokenType::LPAREN})) {
@@ -532,11 +574,11 @@ std::shared_ptr<Expr> Parser::primaryExpr() {
             
             consume(TokenType::RPAREN, "Expected ')' after arguments.");
             
-            return std::make_shared<CallExpr>(name, arguments);
+            return std::make_shared<CallExpr>(name, arguments, line, column);
         }
         
         // 否则是变量引用
-        return std::make_shared<VariableExpr>(name);
+        return std::make_shared<VariableExpr>(name, line, column);
     }
     
     if (match({TokenType::LPAREN})) {
