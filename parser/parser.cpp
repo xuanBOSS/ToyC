@@ -31,7 +31,7 @@ void Parser::synchronize() {
                 isRecovering = false;
                 return;
             }
-
+            // 检查下一个标记是否可能是新语句或声明的开始
             switch (peek(0).type) {
             case TokenType::INT:
             case TokenType::VOID:
@@ -90,15 +90,15 @@ bool Parser::check(TokenType type) const {
 //开始解析过程,返回解析生成的编译单元AST根节点
 std::shared_ptr<CompUnit> Parser::parse() {
     try {
-        auto result = compUnit();
+        auto result = compUnit();  // 解析整个编译单元
         // 即使compUnit没有抛出异常，也检查是否有错误发生
         if (hadError) {
-            return nullptr;
+            return nullptr;// 如果有错误，返回空指针
         }
         return result;
     }
     catch (const ParseError& error) {
-        // 错误处理
+        // 捕获解析错误，返回空指针
         return nullptr;
     }
 }
@@ -110,11 +110,12 @@ std::shared_ptr<CompUnit> Parser::compUnit() {
     // 获取编译单元的起始位置（第一个 token）
     int line = peek(0).line;
     int column = peek(0).column;
-
+    // 解析所有函数定义
     while (!isAtEnd()) {
         isRecovering = false; // 确保每个新函数定义开始时都不处于恢复状态
 
         try {
+            // 检查是否以返回类型开始
             if (check(TokenType::INT) || check(TokenType::VOID)) {
                 auto func = funcDef();
                 if (func) {
@@ -367,8 +368,8 @@ std::shared_ptr<Stmt> Parser::exprStmt() {
 
 //解析变量声明语句,varDeclStmt → 'int' IDENT '=' expr ';'
 std::shared_ptr<Stmt> Parser::varDeclStmt() {
-    int line = peek(0).line;
-    int column = peek(0).column;
+    int line = previous().line;
+    int column = previous().column;
 
     Token name = consume(TokenType::IDENTIFIER, "Expected variable name after 'int'.");
     

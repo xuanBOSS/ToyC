@@ -1,18 +1,19 @@
+// typeVisitor.h - 定义了类型检查访问者
 #pragma once
 #include "parser/astVisitor.h"
 #include <string>
 
 class analyzeVisitor;
-
+// typeVisitor - 用于计算表达式类型的访问者类
 class typeVisitor : public ASTVisitor
 {
 private:
-    analyzeVisitor &owner;
+    analyzeVisitor &owner;// 指向所有者（语义分析访问者）
 
 public:
     explicit typeVisitor(analyzeVisitor &owner) : owner(owner) {}
 
-    std::string type;
+    std::string type;// 当前表达式的类型
 
     // 把类型返回给外部
     std::string getExprType(Expr &expr){

@@ -1,3 +1,4 @@
+// semantic.h - 定义语义分析器接口
 #pragma once
 #include <string>
 #include <stdexcept>
@@ -5,7 +6,7 @@
 #include "parser/astVisitor.h"
 #include "analyzeVisitor.h"
 
-// 语义分析器
+// SemanticAnalyzer - 语义分析器类，协调整个语义分析过程
 class SemanticAnalyzer
 {
 private:

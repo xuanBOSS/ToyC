@@ -18,17 +18,42 @@ all: $(TARGET)
 %.o: %.cpp
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
-# 链接（增加 -lstdc++fs 支持 <filesystem>）
+# 链接
 $(TARGET): $(OBJ)
-	$(CXX) $(CXXFLAGS) -o $@ $^ -lstdc++fs
+	$(CXX) $(CXXFLAGS) -o $@ $^
 
 # 清理目标
 clean:
-	rm -f $(TARGET) $(OBJ) *.s *.ir
+	rm -f $(TARGET) $(OBJ) output/*.s
 
-# 运行测试
-test: all
-	./$(TARGET) test/sample.toyc sample.s
+# 创建输出目录
+output:
+	mkdir -p output
+
+# 运行单个测试
+test_sample: $(TARGET) output
+	./$(TARGET) < test/sample.toyc > output/sample.s
+	@echo "Sample test completed. Output in output/sample.s"
+
+# 运行所有测试
+test_all: $(TARGET) output
+	@echo "Running all tests..."
+	./$(TARGET) < test/complex.toyc > output/complex.s
+	./$(TARGET) < test/function.toyc > output/function.s
+	./$(TARGET) < test/loop.toyc > output/loop.s
+	./$(TARGET) < test/sample.toyc > output/sample.s
+	./$(TARGET) < test/t_semantic.toyc > output/t_semantic.s
+	@echo "All tests completed. Outputs in output/ directory"
+
+# 运行所有测试（带优化）
+test_all_opt: $(TARGET) output
+	@echo "Running all tests with optimization..."
+	./$(TARGET) -opt < test/complex.toyc > output/complex_opt.s
+	./$(TARGET) -opt < test/function.toyc > output/function_opt.s
+	./$(TARGET) -opt < test/loop.toyc > output/loop_opt.s
+	./$(TARGET) -opt < test/sample.toyc > output/sample_opt.s
+	./$(TARGET) -opt < test/t_semantic.toyc > output/t_semantic_opt.s
+	@echo "All optimized tests completed. Outputs in output/ directory"
 
 # 伪目标
-.PHONY: all clean test
+.PHONY: all clean test_sample test_all test_all_opt output

@@ -1,3 +1,4 @@
+// semantic.cpp - 实现语义分析器
 #include "semantic.h"
 #include "analyzeHelper.h"
 #include <iostream>

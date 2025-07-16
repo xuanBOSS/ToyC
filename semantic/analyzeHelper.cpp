@@ -1,3 +1,4 @@
+// analyzeHelper.cpp - 实现语义分析辅助工具类
 #include "analyzeHelper.h"
 #include "analyzeVisitor.h"
 #include "semantic.h"
@@ -6,15 +7,18 @@
 // 初始化静态成员
 SemanticAnalyzer* analyzeHelper::semanticOwner = nullptr;
 
+// 设置语义分析器
 void analyzeHelper::setSemanticOwner(SemanticAnalyzer& analyzer) {
     semanticOwner = &analyzer;
 }
 
+// 进入新作用域 - 创建新的符号表
 void analyzeHelper::enterScope()
 {
     owner.getSymbolTables().push_back(std::unordered_map<std::string, Symbol>());
 }
 
+// 退出当前作用域 - 检查未使用变量并移除当前符号表
 void analyzeHelper::exitScope()
 {
     if (!owner.getSymbolTables().empty())
@@ -24,16 +28,20 @@ void analyzeHelper::exitScope()
     }
 }
 
+// 在当前作用域声明符号
 bool analyzeHelper::declareSymbol(const std::string &name, Symbol symbol)
 {
+    // 检查符号是否已在当前作用域中定义
     if (owner.getSymbolTables().back().find(name) != owner.getSymbolTables().back().end())
     {
-        return false;
+        return false; // 已存在，声明失败
     }
+    // 添加符号到当前作用域
     owner.getSymbolTables().back()[name] = symbol;
     return true;
 }
 
+// 在所有可见作用域中查找符号
 Symbol *analyzeHelper::findSymbol(const std::string &name)
 {
     // 从当前作用域向上查找符号（反向遍历）
@@ -52,6 +60,7 @@ Symbol *analyzeHelper::findSymbol(const std::string &name)
     return nullptr;
 }
 
+// 尝试在编译时计算表达式的值
 OptionalInt analyzeHelper::evaluateConstant(const std::shared_ptr<Expr>& expr)
 {
     // 数字字面量
@@ -103,9 +112,12 @@ OptionalInt analyzeHelper::evaluateConstant(const std::shared_ptr<Expr>& expr)
     return OptionalInt();
 }
 
+// 报告错误
 void analyzeHelper::error(const std::string &message, int line, int column)
 {
+    // 设置错误标志
     owner.success = false;
+    // 构建完整错误消息
     std::string fullMessage = message;
     if (line > 0)
     {
@@ -130,8 +142,10 @@ void analyzeHelper::error(const std::string &message, int line, int column)
  }
 }
 
+// 报告警告
 void analyzeHelper::warning(const std::string &message, int line, int column)
 {
+    // 构建完整警告消息
     std::string fullMessage = message;
     if (line > 0)
     {
@@ -153,33 +167,34 @@ void analyzeHelper::warning(const std::string &message, int line, int column)
     }
 }
 }
-
+// 进入循环
 void analyzeHelper::enterLoop()
 {
     loopDepth++;
 }
-
+// 退出循环
 void analyzeHelper::exitLoop()
 {
     loopDepth--;
 }
-
+// 检查是否在循环内
 bool analyzeHelper::isInLoop() const
 {
     return loopDepth > 0;
 }
-
+// 检查main函数是否有效
 bool analyzeHelper::isValidMainFunction(FunctionDef &funcDef)
 {
     // 检查main函数是否合法
     if (funcDef.returnType != "int")
     {
-        error("main函数返回类型必须为int", funcDef.line, funcDef.column);
+        error("main function must return int", funcDef.line, funcDef.column);
         return false;
     }
+    // main函数不能有参数
     if (!funcDef.params.empty())
     {
-        error("main函数不能有参数", funcDef.line, funcDef.column);
+        error("main function cannot have parameters", funcDef.line, funcDef.column);
         return false;
     }
     return true;
@@ -194,7 +209,7 @@ void analyzeHelper::checkUnusedVariables()
         for (const auto& [name, symbol] : currentScope) {
             // 只检查变量，不检查函数
             if (symbol.kind == Symbol::Kind::VARIABLE && !symbol.used) {
-                warning("变量 '" + name + "' 声明但未使用", symbol.line, symbol.column);
+                warning("Variable '" + name + "' declared but never used", symbol.line, symbol.column);
             }
         }
     }
@@ -209,13 +224,13 @@ void analyzeHelper::detectDeadCode(const std::shared_ptr<Stmt>& stmt)
             if (*constValue) {
                 // 条件恒为真，else分支永远不会执行
                 if (ifStmt->elseBranch) {
-                    warning("此else分支永远不会执行（条件恒为真）", 
+                    warning("This else branch will never execute (condition always true)", 
                             getLineNumber(ifStmt->elseBranch), 
                             ifStmt->elseBranch->column);
                 }
             } else {
                 // 条件恒为假，then分支永远不会执行
-                warning("此if分支永远不会执行（条件恒为假）", 
+                warning("This if branch will never execute (condition always false)", 
                         getLineNumber(ifStmt->thenBranch), 
                         ifStmt->thenBranch->column);
             }
@@ -226,7 +241,7 @@ void analyzeHelper::detectDeadCode(const std::shared_ptr<Stmt>& stmt)
     if (auto whileStmt = dynamic_cast<WhileStmt*>(stmt.get())) {
         if (auto constValue = evaluateConstant(whileStmt->condition)) {
             if (!(*constValue)) {
-                warning("此while循环永远不会执行（条件恒为假）", 
+                warning("This while loop will never execute (condition always false)", 
                         whileStmt->line, whileStmt->column);
             }
         }
@@ -239,19 +254,19 @@ bool analyzeHelper::validateFunctionCall(const std::string& name, const std::vec
     // 查找函数符号
     Symbol* symbol = findSymbol(name);
     if (!symbol) {
-        error("调用未声明的函数 '" + name + "'", line, column);
+        error("Call to undeclared function '" + name + "'", line, column);
         return false;
     }
     
     if (symbol->kind != Symbol::Kind::FUNCTION) {
-        error("'" + name + "' 不是函数", line, column);
+        error("'" + name + "' is not a function", line, column);
         return false;
     }
     
     // 检查参数数量是否匹配
     if (symbol->params.size() != args.size()) {
-        error("函数 '" + name + "' 需要 " + std::to_string(symbol->params.size()) + 
-              " 个参数，但提供了 " + std::to_string(args.size()) + " 个", line, column);
+        error("Function '" + name + "' expects " + std::to_string(symbol->params.size()) + 
+              " arguments but got " + std::to_string(args.size()) + " 个", line, column);
         return false;
     }
     
@@ -266,7 +281,7 @@ bool analyzeHelper::checkTypeCompatibility(const std::shared_ptr<Expr>& expr, co
 {
     // 在这个简单的语言中，所有表达式都是int类型，所以只需检查expectedType是否为int
     if (expectedType != "int") {
-        error("类型不匹配：期望 '" + expectedType + "' 类型", line, column);
+        error("Type mismatch: expected '" + expectedType + "' type", line, column);
         return false;
     }
     

@@ -1,3 +1,4 @@
+// analyzeVisitor.cpp - 实现语义分析访问者
 #include <string>
 #include "analyzeVisitor.h"
 
@@ -27,7 +28,7 @@ void analyzeVisitor::checkUnusedVariables()
         for (const auto& [name, symbol] : scope) {
             if ((symbol.kind == Symbol::Kind::VARIABLE || symbol.kind == Symbol::Kind::PARAMETER) && 
                 !symbol.used) {
-                helper.warning("变量 '" + name + "' 声明但未使用", symbol.line, symbol.column);
+                helper.warning("Variable '" + name + "' declared but never used", symbol.line, symbol.column);
             }
         }
     }
@@ -48,7 +49,7 @@ void analyzeVisitor::detectDeadCode()
                 }
             }
             if (!used) {
-                helper.warning("函数 '" + name + "' 定义但未使用", info.line);
+                helper.warning("Function '" + name + "' defined but never used", info.line);
             }
         }
     }
@@ -59,21 +60,21 @@ void analyzeVisitor::visit(NumberExpr &expr)
 {
     // 数字字面量总是int类型，无需额外检查
 }
-
+// 访问变量引用
 void analyzeVisitor::visit(VariableExpr &expr)
 {
     // 检查变量在当前作用域是否被声明定义
     Symbol *symbol = helper.findSymbol(expr.name);
     if (!symbol)
     {
-        helper.error("未定义的变量: " + expr.name, expr.line, expr.column);
+        helper.error("Undefined variable: " + expr.name, expr.line, expr.column);
         return;
     }
 
     // 标记变量为已使用
     symbol->used = true;
 }
-
+// 访问二元表达式
 void analyzeVisitor::visit(BinaryExpr &expr)
 {
     // 检查操作数子节点
@@ -121,14 +122,14 @@ void analyzeVisitor::visit(BinaryExpr &expr)
             isAlwaysFalse = !isAlwaysTrue;
             
             if (isAlwaysTrue) {
-                helper.warning("条件表达式恒为真", expr.line, expr.column);
+                helper.warning("Condition expression is always true", expr.line, expr.column);
             } else if (isAlwaysFalse) {
-                helper.warning("条件表达式恒为假", expr.line, expr.column);
+                helper.warning("Condition expression is always false", expr.line, expr.column);
             }
         }
     }
 }
-
+// 访问一元表达式
 void analyzeVisitor::visit(UnaryExpr &expr)
 {
     // 检查操作数子节点
@@ -140,14 +141,14 @@ void analyzeVisitor::visit(UnaryExpr &expr)
         helper.error("Unary operator '" + expr.op + "' requires int operand", expr.line, expr.column);
     }
 }
-
+// 访问函数调用表达式
 void analyzeVisitor::visit(CallExpr &expr)
 {
     // 函数是否被定义
     std::string callee = expr.callee;
     if (functionTable.find(callee) == functionTable.end() && callee != currentFunction)
     {
-        helper.error("未定义的函数: " + expr.callee, expr.line, expr.column);
+        helper.error("Undefined function: " + expr.callee, expr.line, expr.column);
         return;
     }
 
@@ -161,7 +162,7 @@ void analyzeVisitor::visit(CallExpr &expr)
     // 参数数量
     if (funcInfo->paramTypes.size() != expr.arguments.size())
     {
-        helper.error("函数 '" + expr.callee + "' 调用参数数量错误", expr.line, expr.column);
+        helper.error("Incorrect number of arguments for function '" + expr.callee + "'", expr.line, expr.column);
     }
     // 实参
     for (size_t i = 0; i < expr.arguments.size(); i++)
@@ -172,9 +173,9 @@ void analyzeVisitor::visit(CallExpr &expr)
         if (i < funcInfo->paramTypes.size()) {
             std::string argType = typeChecker.getExprType(*expr.arguments[i]);
             if (argType != funcInfo->paramTypes[i]) {
-                helper.error("函数 '" + expr.callee + "' 第 " + std::to_string(i+1) + 
-                          " 个参数类型不匹配，期望 '" + funcInfo->paramTypes[i] + 
-                          "', 得到 '" + argType + "'", 
+                helper.error("Function '" + expr.callee + "' argument " + std::to_string(i+1) + 
+                          " type mismatch, expected '" + funcInfo->paramTypes[i] + 
+                          "', got '" + argType + "'", 
                           expr.line, expr.column);
             }
         }
@@ -182,12 +183,11 @@ void analyzeVisitor::visit(CallExpr &expr)
     // 实参类型+返回值类型
     if (typeChecker.getExprType(expr) != funcInfo->returnType)
     {
-         helper.error("函数 '" + expr.callee + "' 返回类型不匹配", expr.line, expr.column);
+         helper.error("Function '" + expr.callee + "' return type mismatch", expr.line, expr.column);
     }
 }
 
-// 语句结点
-
+// 访问表达式语句
 void analyzeVisitor::visit(ExprStmt &stmt)
 {
     if (stmt.expression)
@@ -195,14 +195,14 @@ void analyzeVisitor::visit(ExprStmt &stmt)
         stmt.expression->accept(*this);
     }
 }
-
+// 访问变量声明语句
 void analyzeVisitor::visit(VarDeclStmt &stmt)
 {
     // 检查变量是否已声明
     std::string name = stmt.name;
     if (symbolTables.back().find(name) != symbolTables.back().end())
     {
-        helper.error("变量 '" + stmt.name + "' 在当前作用域中已经声明", stmt.line, stmt.column);
+        helper.error("Variable '" + stmt.name + "' already declared in current scope", stmt.line, stmt.column);
     }
     // 检查初始值类型
     if (stmt.initializer)
@@ -211,7 +211,7 @@ void analyzeVisitor::visit(VarDeclStmt &stmt)
         std::string initType = typeChecker.getExprType(*stmt.initializer);
         if (initType != "int")
         {
-            helper.error("不能使用非整型表达式初始化整型变量", stmt.line, stmt.column);
+            helper.error("Cannot initialize int variable with non-integer expression", stmt.line, stmt.column);
         }
     }
     // 声明变量
@@ -219,14 +219,14 @@ void analyzeVisitor::visit(VarDeclStmt &stmt)
     symbol.used = false; // 初始设置为未使用
     helper.declareSymbol(stmt.name, symbol);
 }
-
+// 访问赋值语句
 void analyzeVisitor::visit(AssignStmt &stmt)
 {
     // 检查变量是否已声明
     Symbol *symbol = helper.findSymbol(stmt.name);
     if (!symbol)
     {
-        helper.error("未定义的变量: " + stmt.name, stmt.line, stmt.column);
+        helper.error("Undefined variable: " + stmt.name, stmt.line, stmt.column);
         return;
     }
     
@@ -236,17 +236,17 @@ void analyzeVisitor::visit(AssignStmt &stmt)
     // 检查变量类型
     if (symbol->kind != Symbol::Kind::VARIABLE && symbol->kind != Symbol::Kind::PARAMETER)
     {
-        helper.error("不能给 '" + stmt.name + "' 赋值 (不是变量)", stmt.line, stmt.column);
+        helper.error("Cannot assign to '" + stmt.name + "' (not a variable)", stmt.line, stmt.column);
     }
     // 检查所赋值的类型（避免void函数调用的情况）
     stmt.value->accept(*this);
     std::string valueType = typeChecker.getExprType(*stmt.value);
     if (valueType != "int")
     {
-        helper.error("赋值给 '" + stmt.name + "' 的类型不匹配", stmt.line, stmt.column);
+        helper.error("Type mismatch in assignment to '" + stmt.name + "'", stmt.line, stmt.column);
     }
 }
-
+// 访问语句块
 void analyzeVisitor::visit(BlockStmt &stmt)
 {
     // 进入新的作用域
@@ -259,7 +259,7 @@ void analyzeVisitor::visit(BlockStmt &stmt)
     // 离开作用域
     helper.exitScope();
 }
-
+// 访问if语句
 void analyzeVisitor::visit(IfStmt &stmt)
 {
     // 检查条件表达式
@@ -267,7 +267,7 @@ void analyzeVisitor::visit(IfStmt &stmt)
     std::string condType = typeChecker.getExprType(*stmt.condition);
     if (condType != "int")
     {
-        helper.error("If条件必须是整型(用作布尔型)", stmt.line, stmt.column);
+        helper.error("If condition must be integer (used as boolean)", stmt.line, stmt.column);
     }
     
     // 检查恒为真或恒为假的条件
@@ -276,12 +276,12 @@ void analyzeVisitor::visit(IfStmt &stmt)
         if (*condValue != 0) {
             // 条件恒为真，else分支是死代码
             if (stmt.elseBranch) {
-                helper.warning("此else分支永远不会执行（条件恒为真）", 
+                helper.warning("This else branch will never execute (condition always true)", 
                              stmt.elseBranch->line, stmt.elseBranch->column);
             }
         } else {
             // 条件恒为假，then分支是死代码
-            helper.warning("此if分支永远不会执行（条件恒为假）", 
+            helper.warning("This if branch will never execute (condition always false)", 
                          stmt.thenBranch->line, stmt.thenBranch->column);
         }
     }
@@ -294,7 +294,7 @@ void analyzeVisitor::visit(IfStmt &stmt)
         stmt.elseBranch->accept(*this);
     }
 }
-
+// 访问while语句
 void analyzeVisitor::visit(WhileStmt &stmt)
 {
     // 检查条件表达式
@@ -302,13 +302,13 @@ void analyzeVisitor::visit(WhileStmt &stmt)
     std::string condType = typeChecker.getExprType(*stmt.condition);
     if (condType != "int")
     {
-        helper.error("While条件必须是整型(用作布尔型)", stmt.line, stmt.column);
+        helper.error("While condition must be integer (used as boolean)", stmt.line, stmt.column);
     }
     
     // 检查恒为假的条件
     auto condValue = helper.evaluateConstant(stmt.condition);
     if (condValue && *condValue == 0) {
-        helper.warning("此while循环永远不会执行（条件恒为假）", stmt.line, stmt.column);
+        helper.warning("This while loop will never execute (condition always false)", stmt.line, stmt.column);
     }
     
     // 进入循环
@@ -318,25 +318,25 @@ void analyzeVisitor::visit(WhileStmt &stmt)
     // 离开循环
     helper.exitLoop();
 }
-
+// 访问break语句
 void analyzeVisitor::visit(BreakStmt &stmt)
 {
     // 检查break语句是否在循环内
     if (!helper.isInLoop())
     {
-        helper.error("Break语句必须在循环内", stmt.line, stmt.column);
+        helper.error("Break statement must be inside loop", stmt.line, stmt.column);
     }
 }
-
+// 访问continue语句
 void analyzeVisitor::visit(ContinueStmt &stmt)
 {
     // 检查continue语句是否在循环内
     if (!helper.isInLoop())
     {
-        helper.error("Continue语句必须在循环内", stmt.line, stmt.column);
+        helper.error("Continue statement must be inside loop", stmt.line, stmt.column);
     }
 }
-
+// 访问return语句
 void analyzeVisitor::visit(ReturnStmt &stmt)
 {
     // return后有非空表达式
@@ -346,22 +346,22 @@ void analyzeVisitor::visit(ReturnStmt &stmt)
         std::string returnType = typeChecker.getExprType(*stmt.value);
         if (returnType != currentFunctionReturnType)
         {
-            helper.error("返回类型不匹配: 期望 '" + currentFunctionReturnType +
-                          "', 得到 '" + returnType + "'", stmt.line, stmt.column);
+            helper.error("Return type mismatch: expected '" + currentFunctionReturnType +
+                          "', got '" + returnType + "'", stmt.line, stmt.column);
         }
     }
-    // return ；
+    // 检查不带返回值的return语句
     else if (currentFunctionReturnType != "void")
     {
-        helper.error("返回类型为 '" + currentFunctionReturnType +
-                      "' 的函数必须返回一个值", stmt.line, stmt.column);
+        helper.error("Function with return type '" + currentFunctionReturnType +
+                      "' must return a value", stmt.line, stmt.column);
     }
 
     hasReturn = true;
 }
 
 
-// 特殊ast结点
+// 访问函数定义
 void analyzeVisitor::visit(FunctionDef &funcDef)
 {
     // 构建当前函数的函数信息结构体，以放进函数表
@@ -372,7 +372,7 @@ void analyzeVisitor::visit(FunctionDef &funcDef)
     // 函数名称在全局的唯一性
     if (functionTable.find(funcDef.name) != functionTable.end())
     {
-        helper.error("重复的函数名", info.line, info.column);
+        helper.error("Duplicate function name", info.line, info.column);
     }
 
     // 续函数信息
@@ -386,7 +386,7 @@ void analyzeVisitor::visit(FunctionDef &funcDef)
     // 如果是main函数，检查其合法性
     if (funcDef.name == "main" && !helper.isValidMainFunction(funcDef))
     {
-        helper.error("非法的main函数声明", info.line, info.column);
+        helper.error("Invalid main function declaration", info.line, info.column);
     }
 
     // 设置当前函数的（全局）上下文
@@ -410,7 +410,7 @@ void analyzeVisitor::visit(FunctionDef &funcDef)
         symbol.used = false; // 初始设置为未使用
         if (!helper.declareSymbol(param.name, symbol))
         {
-            helper.error("参数 '" + param.name + "' 已经声明", info.line, info.column);
+            helper.error("Parameter '" + param.name + "' already declared", info.line, info.column);
         }
     }
 
@@ -421,7 +421,7 @@ void analyzeVisitor::visit(FunctionDef &funcDef)
     // 函数体内无return关键字的情况
     if (funcDef.returnType != "void" && !hasReturn)
     {
-        helper.error("函数 '" + funcDef.name + "' 没有返回语句", info.line, info.column);
+        helper.error("Function '" + funcDef.name + "' has no return statement", info.line, info.column);
     }
 
     // 检查未使用的参数和局部变量
@@ -438,7 +438,7 @@ void analyzeVisitor::visit(FunctionDef &funcDef)
     currentFunctionReturnType = "";
     hasReturn = false;
 }
-
+// 访问编译单元
 void analyzeVisitor::visit(CompUnit &compUnit)
 {
     // 检查是否有main函数
@@ -452,7 +452,7 @@ void analyzeVisitor::visit(CompUnit &compUnit)
     }
     if (!hasMain)
     {
-        helper.error("程序必须有一个main函数");
+        helper.error("Program must have a main function");
     }
     // 分析每个函数定义(main函数的检查包含在内)
     for (const auto &func : compUnit.functions)

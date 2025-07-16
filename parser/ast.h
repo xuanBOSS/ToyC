@@ -1,10 +1,10 @@
-// AST.h
+// AST.h - 定义了抽象语法树(Abstract Syntax Tree)的各种节点类型
 #pragma once
 #include <string>
 #include <vector>
 #include <memory>
 
-// 所有AST节点的基类
+// ASTNode - 所有AST节点的基类，提供基本的位置信息和访问者模式接口
 class ASTNode {
 public:
     int line = 0;    // 源代码行号
@@ -20,22 +20,22 @@ public:
     }
 };
 
-// 表达式节点基类
+// Expr - 表达式节点的基类，所有表达式类型都继承自此类
 class Expr : public ASTNode {
 public:
     virtual ~Expr() = default;
 };
 
-// 语句节点基类
+// Stmt - 语句节点的基类，所有语句类型都继承自此类
 class Stmt : public ASTNode {
 public:
     virtual ~Stmt() = default;
 };
 
-// 数字字面量
+// NumberExpr - 表示数字字面量的表达式节点
 class NumberExpr : public Expr {
 public:
-    int value;
+    int value;// 数字的值
     
     NumberExpr(int value, int line = 0, int column = 0) : value(value) {
         this->line = line;
@@ -44,7 +44,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 变量引用表达式
+// VariableExpr - 表示变量引用的表达式节点
 class VariableExpr : public Expr {
 public:
     std::string name;
@@ -56,7 +56,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 二元操作表达式
+// BinaryExpr - 表示二元操作的表达式节点(如加减乘除、比较、逻辑运算等)
 class BinaryExpr : public Expr {
 public:
     std::shared_ptr<Expr> left;
@@ -72,7 +72,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 一元操作表达式
+// UnaryExpr - 表示一元操作的表达式节点(如正负号、逻辑非等)
 class UnaryExpr : public Expr {
 public:
     std::string op;
@@ -87,7 +87,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 函数调用表达式
+// CallExpr - 表示函数调用的表达式节点
 class CallExpr : public Expr {
 public:
     std::string callee;
@@ -102,7 +102,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 表达式语句
+// ExprStmt - 表示表达式语句的节点(如函数调用语句)
 class ExprStmt : public Stmt {
 public:
     std::shared_ptr<Expr> expression;
@@ -115,7 +115,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 变量声明
+// VarDeclStmt - 表示变量声明语句的节点
 class VarDeclStmt : public Stmt {
 public:
     std::string name;
@@ -130,7 +130,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 赋值语句
+// AssignStmt - 表示赋值语句的节点
 class AssignStmt : public Stmt {
 public:
     std::string name;
@@ -145,7 +145,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 语句块
+// BlockStmt - 表示语句块的节点(由大括号括起的一系列语句)
 class BlockStmt : public Stmt {
 public:
     std::vector<std::shared_ptr<Stmt>> statements;
@@ -159,7 +159,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// if语句
+// IfStmt - 表示if条件语句的节点
 class IfStmt : public Stmt {
 public:
     std::shared_ptr<Expr> condition;
@@ -175,7 +175,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// while语句
+// WhileStmt - 表示while循环语句的节点
 class WhileStmt : public Stmt {
 public:
     std::shared_ptr<Expr> condition;
@@ -190,7 +190,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// break语句
+// BreakStmt - 表示break语句的节点
 class BreakStmt : public Stmt {
 public:
     BreakStmt(int line = 0, int column = 0) {
@@ -200,7 +200,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// continue语句
+// ContinueStmt - 表示continue语句的节点
 class ContinueStmt : public Stmt {
 public:
     ContinueStmt(int line = 0, int column = 0) {
@@ -210,7 +210,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// return语句
+// ReturnStmt - 表示return语句的节点
 class ReturnStmt : public Stmt {
 public:
     std::shared_ptr<Expr> value; // 可能为nullptr
@@ -223,7 +223,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 函数参数
+// Param - 表示函数参数的类
 class Param {
 public:
     std::string name;
@@ -234,7 +234,7 @@ public:
         : name(name), line(line), column(column) {}
 };
 
-// 函数定义
+// FunctionDef - 表示函数定义的节点
 class FunctionDef : public ASTNode {
 public:
     std::string returnType; // "int" 或 "void"
@@ -252,7 +252,7 @@ public:
     void accept(ASTVisitor& visitor) override;
 };
 
-// 编译单元（整个程序）
+// CompUnit - 表示编译单元的节点(整个程序的根节点)
 class CompUnit : public ASTNode {
 public:
     std::vector<std::shared_ptr<FunctionDef>> functions;

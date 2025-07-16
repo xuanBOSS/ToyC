@@ -24,6 +24,8 @@ Lexer::Lexer() : source(""), position(0), line(1), column(1) {
     // 初始化运算符映射表
     initOperators();
 }
+
+// 带参数的构造函数
 Lexer::Lexer(const std::string& source) : source(source), position(0), line(1), column(1) {
     // 初始化关键字映射表
     keywords["int"] = TokenType::INT;
@@ -40,6 +42,7 @@ Lexer::Lexer(const std::string& source) : source(source), position(0), line(1), 
 }
 
 // 初始化运算符映射表
+// 将所有ToyC支持的运算符和标点符号映射到对应的标记类型
 void Lexer::initOperators() {
     operators["="] = TokenType::ASSIGN;
     operators["+"] = TokenType::PLUS;
@@ -324,6 +327,11 @@ Token Lexer::scanNumber() {
     int startColumn = column;
     int startLine = line;
     
+    // 处理可能的负号
+    if (peek() == '-') {
+        advance();
+    }
+
     // 读取所有连续的数字字符
     while (!isAtEnd() && isdigit(peek())) {
         advance();

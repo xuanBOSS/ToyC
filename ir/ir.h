@@ -1,4 +1,4 @@
-// IR.h
+// ir.h - 定义中间表示(IR)的数据结构和接口
 #pragma once
 #include "parser/ast.h"
 #include "parser/astVisitor.h"
@@ -7,12 +7,12 @@
 #include <memory>
 #include <map>
 
-// 操作数类型
+// OperandType - 操作数类型枚举
 enum class OperandType {
-    VARIABLE,    // 变量
-    TEMP,        // 临时变量
-    CONSTANT,    // 常量
-    LABEL        // 标签
+    VARIABLE,    // 变量操作数（命名变量）
+    TEMP,        // 临时变量操作数（编译器生成的临时变量）
+    CONSTANT,    // 常量操作数（字面值）
+    LABEL        // 标签操作数（用于控制流）
 };
 
 // 操作数
@@ -26,8 +26,8 @@ public:
     Operand(OperandType type, const std::string& name) : type(type), name(name), value(0) {}
     Operand(int value) : type(OperandType::CONSTANT), value(value) {}
 
-    std::string toString() const;
-    bool isTemp() const { return type == OperandType::TEMP; }
+    std::string toString() const;// 将操作数转换为字符串表示
+    bool isTemp() const { return type == OperandType::TEMP; } // 检查操作数是否为临时变量
 };
 
 // 指令操作码
@@ -50,6 +50,7 @@ public:
     
     IRInstr(OpCode opcode) : opcode(opcode) {}
     virtual ~IRInstr() {}
+    // 将指令转换为字符串表示（纯虚函数，由子类实现）
     virtual std::string toString() const = 0;
 };
 
@@ -191,14 +192,14 @@ public:
     std::string toString() const override;
 };
 
-
-// IR输出器
+// IRPrinter - IR输出器，用于将IR指令序列输出为文本
 class IRPrinter {
 public:
+    // 将IR指令序列输出到指定流
     static void print(const std::vector<std::shared_ptr<IRInstr>>& instructions, std::ostream& out);
 };
 
-// IR分析器 - 提供IR指令分析工具
+// IRAnalyzer - IR分析器，提供IR指令分析工具
 class IRAnalyzer {
 public:
     // 查找定义特定操作数的指令

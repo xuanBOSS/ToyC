@@ -1,3 +1,4 @@
+// irgen.h - 定义IR生成器接口和优化器
 #pragma once
 #include "ir.h"
 #include "parser/ast.h"
@@ -23,13 +24,17 @@ struct IRGenConfig {
     bool inlineSmallFunctions = false; // 是否内联小函数
 };
 
-// IR生成器
+// IRGenerator - IR生成器类，实现AST访问者接口
 class IRGenerator : public ASTVisitor {
 private:
+    // 生成的IR指令序列
     std::vector<std::shared_ptr<IRInstr>> instructions;
+    // 临时变量和标签计数器
     int tempCount = 0;
     int labelCount = 0;
+    // 变量映射表
     std::map<std::string, std::shared_ptr<Operand>> variables;
+    // 当前函数上下文
     std::string currentFunction;
     std::string currentFunctionReturnType; // 当前函数的返回类型，用于检查 return 语句
     
@@ -67,8 +72,11 @@ public:
     void optimize();
 
     // 辅助方法
+    // 创建临时变量操作数
     std::shared_ptr<Operand> createTemp();
+     // 创建标签操作数
     std::shared_ptr<Operand> createLabel();
+    // 添加指令到指令序列
     void addInstruction(std::shared_ptr<IRInstr> instr);
     
     // 返回栈顶操作数
@@ -146,6 +154,7 @@ private:
 class IROptimizer {
 public:
     virtual ~IROptimizer() = default;
+    // 优化IR指令序列
     virtual void optimize(std::vector<std::shared_ptr<IRInstr>>& instructions) = 0;
 };
 
@@ -162,7 +171,9 @@ class DeadCodeOptimizer : public IROptimizer {
 public:
     void optimize(std::vector<std::shared_ptr<IRInstr>>& instructions) override;
 private:
+    // 找出活跃的指令
     std::vector<bool> findLiveInstructions(const std::vector<std::shared_ptr<IRInstr>>& instructions);
+    // 检查指令是否活跃
     bool isInstructionLive(const std::shared_ptr<IRInstr>& instr, 
                           const std::map<std::string, bool>& liveVars);
 };

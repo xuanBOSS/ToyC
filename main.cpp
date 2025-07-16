@@ -1,3 +1,4 @@
+// main.cpp - 编译器主程序
 #include "lexer/lexer.h"
 #include "parser/parser.h"
 #include "semantic/semantic.h"
@@ -7,25 +8,24 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
-
+#include <string>
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        std::cerr << "Usage: " << argv[0] << " <input.tc> <output.s>" << std::endl;
-        return 1;
+    // 检查是否有 -opt 参数
+    bool enableOptimization = false;
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "-opt") {
+            enableOptimization = true;
+            std::cerr << "Optimization enabled." << std::endl;
+            break;
+        }
     }
     
-    // 读取输入文件
-    std::ifstream input(argv[1]);
-    if (!input) {
-        std::cerr << "Error: Could not open input file " << argv[1] << std::endl;
-        return 1;
-    }
-    
+    // 从标准输入读取源代码
     std::stringstream buffer;
-    buffer << input.rdbuf();
+    buffer << std::cin.rdbuf();
     std::string source = buffer.str();
-    input.close();
     
     // 词法分析
     Lexer lexer(source);
@@ -50,16 +50,31 @@ int main(int argc, char* argv[]) {
     IRGenerator irGenerator;
     irGenerator.generate(ast);
     
-    // 可选：打印IR用于调试
-    std::ofstream irOutput(std::string(argv[2]) + ".ir");
-    IRPrinter::print(irGenerator.getInstructions(), irOutput);
-    irOutput.close();
+    // 可选：打印IR用于调试（输出到stderr不影响标准输出）
+    if (enableOptimization) {
+        std::cerr << "Optimization enabled." << std::endl;
+        IRPrinter::print(irGenerator.getInstructions(), std::cerr);
+    }
+    
+    // 代码生成配置
+    CodeGenConfig config;
+    if (enableOptimization) {
+        // 启用优化选项
+        config.optimizeStackLayout = true;
+        config.eliminateDeadStores = true;
+        config.enablePeepholeOptimizations = true;
+        config.regAllocStrategy = RegisterAllocStrategy::GRAPH_COLOR; // 使用图着色算法
+    }
+    
+    // 创建临时字符串流用于收集输出
+    std::stringstream outputStream;
     
     // 代码生成
-    // 需要修改CodeGenerator使其接收IR而不是AST
-    CodeGenerator generator(argv[2], irGenerator.getInstructions());
+    CodeGenerator generator(outputStream, irGenerator.getInstructions(), config);
     generator.generate();
     
-    std::cout << "Compilation successful. Output written to " << argv[2] << std::endl;
+    // 将生成的汇编代码输出到标准输出
+    std::cout << outputStream.str();
+    
     return 0;
 }

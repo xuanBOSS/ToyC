@@ -1,3 +1,4 @@
+// typeVisitor.cpp - 实现类型检查访问者
 #include "typeVisitor.h"
 #include "analyzeVisitor.h"
 
@@ -7,9 +8,9 @@ bool typeVisitor::isTypeCompatible(const std::string& sourceType, const std::str
     // 目前只有 int 和 void 类型，并且 void 只能作为函数返回类型
     return sourceType == targetType;
 }
-
+// 数字字面量总是int类型
 void typeVisitor::visit(NumberExpr &) { type = "int"; }
-
+// 变量引用的类型就是变量的声明类型
 void typeVisitor::visit(VariableExpr &expr)
 {
     Symbol *symbol = owner.helper.findSymbol(expr.name);
@@ -23,7 +24,7 @@ void typeVisitor::visit(VariableExpr &expr)
     symbol->used = true;
     type = symbol->type;
 }
-
+// 二元表达式的类型检查
 void typeVisitor::visit(BinaryExpr &expr)
 {
     expr.left->accept(*this);
@@ -32,7 +33,7 @@ void typeVisitor::visit(BinaryExpr &expr)
     std::string rightType = type;
     if (leftType != "int" || rightType != "int")
     {
-        owner.helper.error("二元运算符 '" + expr.op + "' 需要整型操作数", expr.line, expr.column);
+        owner.helper.error("Binary operator '" + expr.op + "' requires integer operands", expr.line, expr.column);
         type = "error";
     }
     else
@@ -40,13 +41,13 @@ void typeVisitor::visit(BinaryExpr &expr)
         type = "int";
     }
 }
-
+// 一元表达式的类型检查
 void typeVisitor::visit(UnaryExpr &expr)
 {
     expr.operand->accept(*this);
     if (type != "int")
     {
-        owner.helper.error("一元运算符 '" + expr.op + "' 需要整型操作数", expr.line, expr.column);
+        owner.helper.error("Unary operator '" + expr.op + "' requires integer operand", expr.line, expr.column);
         type = "error";
     }
     else
@@ -54,7 +55,7 @@ void typeVisitor::visit(UnaryExpr &expr)
         type = "int";
     }
 }
-
+// 函数调用表达式的类型检查
 void typeVisitor::visit(CallExpr &expr)
 {
     auto it = owner.getFunctionTable().find(expr.callee);
@@ -72,7 +73,7 @@ void typeVisitor::visit(CallExpr &expr)
     
     // 增强参数类型检查
     if (expr.arguments.size() != it->second.paramTypes.size()) {
-        owner.helper.error("函数 '" + expr.callee + "' 调用参数数量错误", expr.line, expr.column);
+        owner.helper.error("Incorrect number of arguments for function '" + expr.callee + "'", expr.line, expr.column);
         type = it->second.returnType; // 尽管有错误，仍返回函数的返回类型
         return;
     }
@@ -84,21 +85,23 @@ void typeVisitor::visit(CallExpr &expr)
         
         if (!isTypeCompatible(argType, it->second.paramTypes[i]))
         {
-            owner.helper.error("函数 '" + expr.callee + "' 第 " + std::to_string(i+1) + 
-                           " 个参数类型不匹配", expr.line, expr.column);
+            owner.helper.error("Function '" + expr.callee + "' argument " + std::to_string(i+1) + 
+                           " type mismatch", expr.line, expr.column);
         }
     }
     
     type = it->second.returnType;
 }
 
-// 以下是必须实现的其他typeVisitor::visit方法（其实没用）
+// === 以下是语句节点的访问方法（主要用于完整性） ===
+
+// 表达式语句的类型检查
 void typeVisitor::visit(ExprStmt &stmt)
 {
     if (stmt.expression)
         stmt.expression->accept(*this);
 }
-
+// 变量声明语句的类型检查
 void typeVisitor::visit(VarDeclStmt &stmt)
 {
     if (stmt.initializer){
@@ -106,14 +109,14 @@ void typeVisitor::visit(VarDeclStmt &stmt)
 
         // 检查初始化表达式类型
         if (type != "int") {
-            owner.helper.error("无法使用非整型表达式初始化整型变量", stmt.line, stmt.column);
+            owner.helper.error("Cannot initialize integer variable with non-integer expression", stmt.line, stmt.column);
         }
     }
     
     // 变量声明总是返回 void
     type = "void";
 }
-
+// 赋值语句的类型检查
 void typeVisitor::visit(AssignStmt &stmt)
 {
     // 获取变量类型
@@ -131,15 +134,15 @@ void typeVisitor::visit(AssignStmt &stmt)
     std::string valueType = type;
     
     if (!isTypeCompatible(valueType, symbol->type)) {
-        owner.helper.error("赋值类型不匹配：变量 '" + stmt.name + "' 的类型为 '" + 
-                       symbol->type + "', 表达式类型为 '" + valueType + "'", 
+        owner.helper.error("Assignment type mismatch: variable '" + stmt.name + "' has type '" + 
+                       symbol->type + "', expression has type '" + valueType + "'", 
                        stmt.line, stmt.column);
     }
     
     // 赋值语句总是返回 void
     type = "void";
 }
-
+// 语句块的类型检查
 void typeVisitor::visit(BlockStmt &stmt)
 {
     for (auto &s : stmt.statements)
@@ -148,12 +151,12 @@ void typeVisitor::visit(BlockStmt &stmt)
     // 代码块总是返回 void
     type = "void";
 }
-
+// if语句的类型检查
 void typeVisitor::visit(IfStmt &stmt)
 {
     stmt.condition->accept(*this);
     if (type != "int") {
-        owner.helper.error("If条件必须是整型(用作布尔型)", stmt.line, stmt.column);
+        owner.helper.error("If condition must be integer (used as boolean)", stmt.line, stmt.column);
     }
     
     stmt.thenBranch->accept(*this);
@@ -163,12 +166,12 @@ void typeVisitor::visit(IfStmt &stmt)
     // if语句总是返回 void
     type = "void";
 }
-
+// while语句的类型检查
 void typeVisitor::visit(WhileStmt &stmt)
 {
     stmt.condition->accept(*this);
     if (type != "int") {
-        owner.helper.error("While条件必须是整型(用作布尔型)", stmt.line, stmt.column);
+        owner.helper.error("While condition must be integer (used as boolean)", stmt.line, stmt.column);
     }
     
     stmt.body->accept(*this);
@@ -176,17 +179,17 @@ void typeVisitor::visit(WhileStmt &stmt)
     // while语句总是返回 void
     type = "void";
 }
-
+// break语句的类型检查
 void typeVisitor::visit(BreakStmt &) {
     // break语句总是返回 void
     type = "void";
 }
-
+// continue语句的类型检查
 void typeVisitor::visit(ContinueStmt &) {
     // continue语句总是返回 void
     type = "void";
 }
-
+// return语句的类型检查
 void typeVisitor::visit(ReturnStmt &stmt)
 {
     if (stmt.value) {
@@ -197,14 +200,14 @@ void typeVisitor::visit(ReturnStmt &stmt)
         type = "void";
     }
 }
-
+// 函数定义的类型检查
 void typeVisitor::visit(FunctionDef &funcDef)
 {
     funcDef.body->accept(*this);
     // 函数定义总是返回 void
     type = "void";
 }
-
+// 编译单元的类型检查
 void typeVisitor::visit(CompUnit &compUnit)
 {
     for (auto &func : compUnit.functions)

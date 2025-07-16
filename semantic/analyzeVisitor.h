@@ -1,3 +1,4 @@
+// analyzeVisitor.h - 定义了语义分析的主要访问者类
 #pragma once
 #include <vector>
 #include <unordered_map>
@@ -7,6 +8,7 @@
 #include "analyzeHelper.h"
 #include "infos.h"
 
+// analyzeVisitor - 进行语义分析的AST访问者类
 class analyzeVisitor : public ASTVisitor
 {
 private:

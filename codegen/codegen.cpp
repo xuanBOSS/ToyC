@@ -1,3 +1,5 @@
+// codegen.cpp - 代码生成器实现
+// 本文件实现了将IR指令转换为RISC-V汇编代码的功能
 #include "codegen.h"
 #include <sstream>
 #include <iostream>
@@ -8,16 +10,11 @@
 #include <limits>
 
 // 代码生成器构造函数，初始化输出文件和配置
-CodeGenerator::CodeGenerator(const std::string& outputFile, 
+CodeGenerator::CodeGenerator(std::ostream& outputStream,  
                            const std::vector<std::shared_ptr<IRInstr>>& instructions,
                            const CodeGenConfig& config)
-    : instructions(instructions), config(config) {
-    output.open(outputFile);
-    if (!output) {
-        std::cerr << "错误: 无法打开输出文件: " << outputFile << std::endl;
-        exit(1);
-    }
-    
+    : output(outputStream), instructions(instructions), config(config) {
+
     // 初始化寄存器信息
     initializeRegisters();
     
@@ -34,12 +31,10 @@ CodeGenerator::CodeGenerator(const std::string& outputFile,
 
 // 析构函数，关闭输出文件
 CodeGenerator::~CodeGenerator() {
-    if (output.is_open()) {
-        output.close();
-    }
 }
 
-// 生成汇编代码的主要方法
+// 生成汇编代码的主方法
+// 处理所有IR指令，应用优化，并输出最终的汇编代码
 void CodeGenerator::generate() {
     // 创建一个临时存储生成的汇编指令的向量
     std::vector<std::string> asmInstructions;
@@ -91,7 +86,8 @@ void CodeGenerator::generate() {
     }
 }
 
-//将指令处理结果写入指定流
+// 将单条IR指令处理结果写入指定流
+// 临时重定向输出，处理指令，然后恢复原始输出
 void CodeGenerator::processInstructionToStream(const std::shared_ptr<IRInstr>& instr, std::ostream& stream) {
     // 保存原始处理方法的输出
     std::streambuf* originalBuf = output.std::ostream::rdbuf();
@@ -107,36 +103,43 @@ void CodeGenerator::processInstructionToStream(const std::shared_ptr<IRInstr>& i
 }
 
 // 生成唯一的标签名
+// 使用递增计数器确保标签唯一性
 std::string CodeGenerator::genLabel() {
     return "L" + std::to_string(labelCount++);
 }
 
 // 输出注释
+// 在汇编代码中添加注释行
 void CodeGenerator::emitComment(const std::string& comment) {
     output << "\t# " << comment << "\n";
 }
 
 // 输出指令
+// 在汇编代码中添加指令行
 void CodeGenerator::emitInstruction(const std::string& instr) {
     output << "\t" << instr << "\n";
 }
 
 // 输出标签
+// 在汇编代码中添加标签定义
 void CodeGenerator::emitLabel(const std::string& label) {
     output << label << ":\n";
 }
 
 // 输出全局标识符
+// 声明一个全局可见的符号
 void CodeGenerator::emitGlobal(const std::string& name) {
     output << "\t.global " << name << "\n";
 }
 
 // 输出段定义
+// 定义代码或数据段
 void CodeGenerator::emitSection(const std::string& section) {
     output << "\t" << section << "\n";
 }
 
-// 处理IR指令，根据操作码调用相应的处理函数
+// 处理IR指令
+// 根据指令的操作码类型调用相应的处理函数
 void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
     // 根据指令类型调用相应的处理函数
     switch (instr->opcode) {
@@ -204,6 +207,7 @@ void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
 }
 
 // 处理二元操作指令
+// 为二元运算生成相应的RISC-V汇编代码
 void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr) {
     emitComment(instr->toString());
     
@@ -280,6 +284,7 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
 }
 
 // 处理一元操作指令
+// 为一元运算生成相应的RISC-V汇编代码
 void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
     emitComment(instr->toString());
     
@@ -312,6 +317,7 @@ void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
 }
 
 // 处理赋值指令
+// 将源操作数的值赋给目标操作数
 void CodeGenerator::processAssign(const std::shared_ptr<AssignInstr>& instr) {
     emitComment(instr->toString());
     
@@ -329,6 +335,7 @@ void CodeGenerator::processAssign(const std::shared_ptr<AssignInstr>& instr) {
 }
 
 // 处理无条件跳转指令
+// 生成无条件跳转到目标标签的指令
 void CodeGenerator::processGoto(const std::shared_ptr<GotoInstr>& instr) {
     emitComment(instr->toString());
     
@@ -337,6 +344,7 @@ void CodeGenerator::processGoto(const std::shared_ptr<GotoInstr>& instr) {
 }
 
 // 处理条件跳转指令
+// 如果条件为真，则跳转到目标标签
 void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
     emitComment(instr->toString());
     
@@ -353,10 +361,12 @@ void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
     freeTempReg(condReg);
 }
 
-// 参数传递队列（全局）
+// 参数传递队列（全局静态变量）
+// 用于收集函数调用的参数，直到调用函数时使用
 static std::vector<std::shared_ptr<Operand>> paramQueue;
 
 // 处理参数指令
+// 将参数添加到参数队列中，等待后续函数调用使用
 void CodeGenerator::processParam(const std::shared_ptr<ParamInstr>& instr) {
     emitComment(instr->toString());
     
@@ -365,6 +375,7 @@ void CodeGenerator::processParam(const std::shared_ptr<ParamInstr>& instr) {
 }
 
 // 处理函数调用指令
+// 准备参数，调用函数，处理返回值
 void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     emitComment(instr->toString());
     
@@ -430,6 +441,7 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
 }
 
 // 处理返回指令
+// 如果有返回值，将其加载到a0寄存器，然后跳转到函数结束处理
 void CodeGenerator::processReturn(const std::shared_ptr<ReturnInstr>& instr) {
     emitComment(instr->toString());
     
@@ -443,12 +455,14 @@ void CodeGenerator::processReturn(const std::shared_ptr<ReturnInstr>& instr) {
 }
 
 // 处理标签指令
+// 在汇编代码中生成标签定义
 void CodeGenerator::processLabel(const std::shared_ptr<LabelInstr>& instr) {
     // 生成标签
     emitLabel(instr->label);
 }
 
 // 处理函数开始指令
+// 初始化函数上下文，生成函数标签和序言
 void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInstr>& instr) {
     currentFunction = instr->funcName;
     stackSize = 0;
@@ -465,6 +479,7 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
 }
 
 // 处理函数结束指令
+// 生成函数结束标签和后记
 void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& instr) {
     // 函数结束标签
     emitLabel(currentFunction + "_epilogue");
@@ -477,6 +492,7 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
 }
 
 // 生成函数序言
+// 设置栈帧，保存返回地址和帧指针
 void CodeGenerator::emitPrologue(const std::string& funcName) {
     emitComment("函数序言");
     
@@ -485,14 +501,19 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     int frameSize = 8 + stackSize;
     
     // 保存返回地址和帧指针
+    // 1. 分配栈空间
     emitInstruction("addi sp, sp, -" + std::to_string(frameSize));
+    // 2. 保存返回地址(ra)到栈顶
     emitInstruction("sw ra, " + std::to_string(frameSize - 4) + "(sp)");
+    // 3. 保存帧指针(fp)到栈顶下一个位置
     emitInstruction("sw fp, " + std::to_string(frameSize - 8) + "(sp)");
     
     // 设置新的帧指针
+    // 指向当前函数调用前的栈顶
     emitInstruction("addi fp, sp, " + std::to_string(frameSize));
     
     // 保存被调用者保存的寄存器
+    // 这些寄存器需要在函数返回前恢复原值
     saveCalleeSavedRegs();
 
     frameInitialized = true;
@@ -500,6 +521,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
 }
 
 // 生成函数后记
+// 恢复保存的寄存器，恢复栈帧，返回
 void CodeGenerator::emitEpilogue(const std::string& funcName) {
     emitComment("函数后记");
     
@@ -518,6 +540,7 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
 }
 
 // 加载操作数到寄存器
+// 根据操作数类型生成不同的加载指令
 void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
     switch (op->type) {
         case OperandType::CONSTANT: // 常量操作数
@@ -552,6 +575,7 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
 }
 
 // 存储寄存器内容到操作数
+// 根据操作数是否分配了寄存器，生成不同的存储指令
 void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
     if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
         // 检查是否已分配到寄存器
@@ -572,6 +596,7 @@ void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<
 }
 
 // 获取操作数的栈偏移
+// 如果操作数尚未分配栈空间，则分配新的栈空间
 int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
     if (op->type != OperandType::VARIABLE && op->type != OperandType::TEMP) {
         std::cerr << "错误: 只有变量和临时变量有栈偏移" << std::endl;
@@ -597,6 +622,7 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
 }
 
 // 分配临时寄存器
+// 从临时寄存器池中轮流分配寄存器
 std::string CodeGenerator::allocTempReg() {
     if (nextTempReg >= tempRegs.size()) {
         nextTempReg = 0;

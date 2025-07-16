@@ -1,3 +1,4 @@
+// irgen.cpp - 实现IR生成器和优化器
 #include "irgen.h"
 #include "ir.h"
 #include <set>
@@ -1156,7 +1157,13 @@ void IRGenerator::visit(IfStmt& stmt) {
     std::shared_ptr<Operand> condition = getTopOperand();
     
     // 如果条件为假，跳转到else分支
-    addInstruction(std::make_shared<IfGotoInstr>(condition, elseLabel));
+    // 注意：IfGotoInstr在条件为真时跳转，所以我们需要翻转逻辑
+    // 我们想要的是：if (!condition) goto elseLabel
+    // 但IfGotoInstr是：if (condition) goto target
+    // 所以我们需要使用一个临时变量来存储!condition
+    std::shared_ptr<Operand> notCondition = createTemp();
+    addInstruction(std::make_shared<UnaryOpInstr>(OpCode::NOT, notCondition, condition));
+    addInstruction(std::make_shared<IfGotoInstr>(notCondition, elseLabel));
     
     // 为then分支生成代码
     stmt.thenBranch->accept(*this);
