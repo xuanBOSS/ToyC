@@ -58,7 +58,12 @@ private:
     bool isInLoop = false;                     // 是否在循环内
     std::vector<std::string> breakLabels;      // break语句跳转目标标签栈
     std::vector<std::string> continueLabels;   // continue语句跳转目标标签栈
-    
+    std::vector<std::string> currentFunctionParams; // 当前函数的参数名列表
+    std::string currentFunctionReturnType;     // 当前函数的返回类型
+
+    // 参数处理
+    std::vector<std::shared_ptr<Operand>> paramQueue; // 函数调用参数队列
+
     // IR指令列表
     const std::vector<std::shared_ptr<IRInstr>>& instructions;
     

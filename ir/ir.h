@@ -139,6 +139,8 @@ public:
     std::string funcName;
     int paramCount;
     
+    std::vector<std::shared_ptr<Operand>> params; // 新增：存储参数列表，便于代码生成
+
     CallInstr(std::shared_ptr<Operand> result,
              const std::string& funcName,
              int paramCount)
@@ -173,10 +175,11 @@ public:
 class FunctionBeginInstr : public IRInstr {
 public:
     std::string funcName;
-    std::vector<std::string> paramNames; // 新增：参数名列表
+    std::vector<std::string> paramNames; //参数名列表
+    std::string returnType;  // 新增：函数返回类型
     
-    FunctionBeginInstr(const std::string& funcName)
-        : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName) {}
+    FunctionBeginInstr(const std::string& funcName, const std::string& returnType = "int")
+        : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName), returnType(returnType) {}
     
     std::string toString() const override;
 };
@@ -220,4 +223,8 @@ public:
     
     // 获取指令使用的变量
     static std::vector<std::string> getUsedVariables(const std::shared_ptr<IRInstr>& instr);
+
+    //用于检查函数是否被使用
+    static bool isFunctionUsed(const std::vector<std::shared_ptr<IRInstr>>& instructions,
+                          const std::string& funcName);
 };

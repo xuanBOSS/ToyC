@@ -51,6 +51,9 @@ private:
     // 变量作用域管理
     std::vector<std::map<std::string, std::shared_ptr<Operand>>> scopeStack;
 
+    // 函数使用跟踪
+    std::set<std::string> usedFunctions;
+
 public:
     IRGenerator(const IRGenConfig& config = IRGenConfig()) : config(config) {
         // 初始化作用域栈
@@ -81,6 +84,11 @@ public:
     
     // 返回栈顶操作数
     std::shared_ptr<Operand> getTopOperand();
+
+    // 获取使用过的函数列表
+    const std::set<std::string>& getUsedFunctions() const {
+        return usedFunctions;
+    }
     
     // 实现ASTVisitor接口
     void visit(NumberExpr& expr) override;
@@ -148,6 +156,9 @@ private:
 
     // 辅助函数，递归判断一个语句是否所有路径都 return
     bool allPathsReturn(const std::shared_ptr<Stmt>& stmt);
+
+    // 记录函数被使用
+    void markFunctionAsUsed(const std::string& funcName);
 };
 
 // IR优化器接口

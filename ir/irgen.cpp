@@ -1047,17 +1047,26 @@ void IRGenerator::visit(CallExpr& expr) {
         args.push_back(getTopOperand());
     }
     
-    // 倒序添加参数指令（参数从右到左压栈）
-    for (auto it = args.rbegin(); it != args.rend(); ++it) {
-        addInstruction(std::make_shared<ParamInstr>(*it));
+    // 从左到右添加参数指令（与RISC-V调用约定一致）
+    for (const auto& arg : args) {
+        addInstruction(std::make_shared<ParamInstr>(arg));
     }
     
     // 为结果创建临时变量
     std::shared_ptr<Operand> result = createTemp();
     
+    // 创建调用指令
+    auto callInstr = std::make_shared<CallInstr>(
+        result, expr.callee, expr.arguments.size());
+    
+    // 存储参数列表，便于代码生成
+    callInstr->params = args;
+    
     // 调用函数
-    addInstruction(std::make_shared<CallInstr>(
-        result, expr.callee, expr.arguments.size()));
+    addInstruction(callInstr);
+    
+    // 记录函数被使用
+    markFunctionAsUsed(expr.callee);
     
     // 将结果推入操作数栈
     operandStack.push_back(result);
@@ -1294,9 +1303,17 @@ void IRGenerator::visit(ReturnStmt& stmt) {
  */
 void IRGenerator::visit(FunctionDef& funcDef) {
     currentFunction = funcDef.name;
-    
+    currentFunctionReturnType = funcDef.returnType;
+
     // 函数开始
-    addInstruction(std::make_shared<FunctionBeginInstr>(funcDef.name));
+    auto funcBeginInstr = std::make_shared<FunctionBeginInstr>(funcDef.name, funcDef.returnType);
+    
+    // 添加参数名列表
+    for (const auto& param : funcDef.params) {
+        funcBeginInstr->paramNames.push_back(param.name);
+    }
+    
+    addInstruction(funcBeginInstr);
     
     // 进入新的作用域
     enterScope();
@@ -1512,4 +1529,32 @@ std::vector<std::string> IRAnalyzer::getUsedVariables(const std::shared_ptr<IRIn
     }
     
     return usedVars;
+}
+/**
+ * 检查函数是否被使用
+ * 
+ * @param instructions 要搜索的IR指令
+ * @param funcName 要检查的函数名
+ * @return 如果函数被使用则为true
+ */
+bool IRAnalyzer::isFunctionUsed(const std::vector<std::shared_ptr<IRInstr>>& instructions,
+                              const std::string& funcName) {
+    // 如果是main函数，总是被使用
+    if (funcName == "main") {
+        return true;
+    }
+    
+    for (const auto& instr : instructions) {
+        if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+            if (callInstr->funcName == funcName) {
+                return true;
+            }
+        }
+    }
+    
+    return false;
+}
+
+void IRGenerator::markFunctionAsUsed(const std::string& funcName) {
+    usedFunctions.insert(funcName);
 }

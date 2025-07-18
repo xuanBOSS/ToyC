@@ -38,11 +38,11 @@ test_sample: $(TARGET) output
 # 运行所有测试
 test_all: $(TARGET) output
 	@echo "Running all tests..."
-	./$(TARGET) < test/complex.toyc > output/complex.s
-	./$(TARGET) < test/function.toyc > output/function.s
-	./$(TARGET) < test/loop.toyc > output/loop.s
-	./$(TARGET) < test/sample.toyc > output/sample.s
-	./$(TARGET) < test/t_semantic.toyc > output/t_semantic.s
+	./$(TARGET) < test/01_minimal.tc > output/01.s
+	./$(TARGET) < test/02_assignment.tc > output/02.s
+	./$(TARGET) < test/03_if_else.tc > output/03.s
+	./$(TARGET) < test/04_while_break.tc > output/04.s
+	./$(TARGET) < test/05_function_call.tc > output/05.s
 	@echo "All tests completed. Outputs in output/ directory"
 
 # 运行所有测试（带优化）
@@ -55,5 +55,11 @@ test_all_opt: $(TARGET) output
 	./$(TARGET) -opt < test/t_semantic.toyc > output/t_semantic_opt.s
 	@echo "All optimized tests completed. Outputs in output/ directory"
 
+# 添加一个调试目标
+debug_test: $(TARGET) output
+	@echo "Running first test with debug output..."
+	./$(TARGET) < test/01_minimal.tc > output/01.s
+	@echo "Debug test completed."
+	
 # 伪目标
 .PHONY: all clean test_sample test_all test_all_opt output

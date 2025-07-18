@@ -22,15 +22,18 @@ int main(int argc, char* argv[]) {
         }
     }
     
+    std::cerr << "程序开始执行\n";
     // 从标准输入读取源代码
     std::stringstream buffer;
     buffer << std::cin.rdbuf();
     std::string source = buffer.str();
-    
+    std::cerr << "初始化完成，开始编译\n";
+
     // 词法分析
     Lexer lexer(source);
     std::vector<Token> tokens = lexer.tokenize();
-    
+    std::cerr << "词法分析完成\n";
+
     // 语法分析
     Parser parser(tokens);
     std::shared_ptr<CompUnit> ast = parser.parse();
@@ -38,7 +41,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Parsing failed." << std::endl;
         return 1;
     }
-    
+    std::cerr << "语法分析完成\n";
+
     // 语义分析
     SemanticAnalyzer semanticAnalyzer;
     if (!semanticAnalyzer.analyze(ast)) {
@@ -55,7 +59,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "Optimization enabled." << std::endl;
         IRPrinter::print(irGenerator.getInstructions(), std::cerr);
     }
-    
+    std::cerr << "IR生成完成\n";
+
     // 代码生成配置
     CodeGenConfig config;
     if (enableOptimization) {
@@ -68,11 +73,15 @@ int main(int argc, char* argv[]) {
     
     // 创建临时字符串流用于收集输出
     std::stringstream outputStream;
-    
+    std::cerr << "代码生成开始\n";
+    std::cerr << "准备创建CodeGenerator\n";
     // 代码生成
     CodeGenerator generator(outputStream, irGenerator.getInstructions(), config);
+    std::cerr << "CodeGenerator创建完成\n";
+    std::cerr << "开始生成代码\n";
     generator.generate();
     
+    std::cerr << "代码生成完成\n";
     // 将生成的汇编代码输出到标准输出
     std::cout << outputStream.str();
     

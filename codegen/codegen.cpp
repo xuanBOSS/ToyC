@@ -14,10 +14,22 @@ CodeGenerator::CodeGenerator(std::ostream& outputStream,
                            const std::vector<std::shared_ptr<IRInstr>>& instructions,
                            const CodeGenConfig& config)
     : output(outputStream), instructions(instructions), config(config) {
+    
+    
+    std::cerr << "CodeGenerator构造函数开始\n";
+    
+    // 打印IR指令数量
+    std::cerr << "IR指令数量: " << instructions.size() << "\n";
+    
+    // 初始化寄存器信息
+    std::cerr << "初始化寄存器信息\n";
 
     // 初始化寄存器信息
     initializeRegisters();
-    
+
+    std::cerr << "寄存器信息初始化完成\n";
+    std::cerr << "输出文件头\n";
+
     // 输出文件头
     emitComment("由ToyC编译器生成");
     emitComment("RISC-V汇编代码");
@@ -25,8 +37,11 @@ CodeGenerator::CodeGenerator(std::ostream& outputStream,
     
     // 如果启用了寄存器分配优化，则执行寄存器分配
     if (config.regAllocStrategy != RegisterAllocStrategy::NAIVE) {
+        std::cerr << "执行寄存器分配\n";
         allocateRegisters();
+        std::cerr << "寄存器分配完成\n";
     }
+    std::cerr << "CodeGenerator构造函数完成\n";
 }
 
 // 析构函数，关闭输出文件
@@ -36,9 +51,12 @@ CodeGenerator::~CodeGenerator() {
 // 生成汇编代码的主方法
 // 处理所有IR指令，应用优化，并输出最终的汇编代码
 void CodeGenerator::generate() {
+    std::cerr << "进入generate方法\n";
+
     // 创建一个临时存储生成的汇编指令的向量
     std::vector<std::string> asmInstructions;
-    
+
+    std::cerr << "开始处理IR指令, 总数: " << instructions.size() << "\n";
     // 处理所有IR指令
     for (const auto& instr : instructions) {
         // 创建一个临时字符串流
@@ -70,6 +88,8 @@ void CodeGenerator::generate() {
         }
     }
     
+    std::cerr << "IR指令处理完成\n";
+
     // 如果启用了窥孔优化
     if (config.enablePeepholeOptimizations) {
         peepholeOptimize(asmInstructions);
@@ -84,6 +104,8 @@ void CodeGenerator::generate() {
     for (const auto& instr : asmInstructions) {
         output << "\t" << instr << "\n";
     }
+
+    std::cerr << "generate方法执行完成\n";
 }
 
 // 将单条IR指令处理结果写入指定流
@@ -111,7 +133,7 @@ std::string CodeGenerator::genLabel() {
 // 输出注释
 // 在汇编代码中添加注释行
 void CodeGenerator::emitComment(const std::string& comment) {
-    output << "\t# " << comment << "\n";
+    output << "# " << comment << "\n";
 }
 
 // 输出指令
@@ -135,7 +157,7 @@ void CodeGenerator::emitGlobal(const std::string& name) {
 // 输出段定义
 // 定义代码或数据段
 void CodeGenerator::emitSection(const std::string& section) {
-    output << "\t" << section << "\n";
+    output << section << "\n";
 }
 
 // 处理IR指令
@@ -363,7 +385,7 @@ void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
 
 // 参数传递队列（全局静态变量）
 // 用于收集函数调用的参数，直到调用函数时使用
-static std::vector<std::shared_ptr<Operand>> paramQueue;
+//static std::vector<std::shared_ptr<Operand>> paramQueue;
 
 // 处理参数指令
 // 将参数添加到参数队列中，等待后续函数调用使用
@@ -381,10 +403,24 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     
     // 获取参数个数
     int paramCount = instr->paramCount;
+    std::vector<std::shared_ptr<Operand>> params;
     
-    // 检查参数队列大小是否匹配
-    if (paramQueue.size() < paramCount) {
-        std::cerr << "错误: 参数队列大小不匹配, 预期 " << paramCount << ", 实际 " << paramQueue.size() << std::endl;
+    // 优先使用 CallInstr 中存储的参数列表
+    if (!instr->params.empty()) {
+        params = instr->params;
+    } else if (!paramQueue.empty()) {
+        // 兼容旧代码，使用 paramQueue
+        if (paramQueue.size() >= paramCount) {
+            params.assign(paramQueue.end() - paramCount, paramQueue.end());
+        } else {
+            std::cerr << "错误: 参数队列大小不匹配, 预期 " << paramCount 
+                      << ", 实际 " << paramQueue.size() << std::endl;
+            // 防止后续的段错误
+            return;
+        }
+    } else {
+        std::cerr << "错误: 没有可用的参数" << std::endl;
+        return;
     }
     
     // 保存调用者保存的寄存器
@@ -448,6 +484,9 @@ void CodeGenerator::processReturn(const std::shared_ptr<ReturnInstr>& instr) {
     // 如果有返回值，加载到a0
     if (instr->value) {
         loadOperand(instr->value, "a0");
+    }else if (currentFunctionReturnType != "void") {
+        // 如果函数返回类型不是void，但没有明确的返回值，默认返回0
+        emitInstruction("li a0, 0");
     }
     
     // 函数返回，跳转到函数结束处理
@@ -465,6 +504,12 @@ void CodeGenerator::processLabel(const std::shared_ptr<LabelInstr>& instr) {
 // 初始化函数上下文，生成函数标签和序言
 void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInstr>& instr) {
     currentFunction = instr->funcName;
+    currentFunctionReturnType = instr->returnType;
+    if (instr) {
+        currentFunctionParams = instr->paramNames;
+    } else {
+        currentFunctionParams.clear();
+    }
     stackSize = 0;
     frameSize = 8; // 初始为ra和fp的保存空间
     localVars.clear();
@@ -476,6 +521,34 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     
     // 生成函数序言
     emitPrologue(instr->funcName);
+
+    if (currentFunctionParams.empty()) {
+        // 没有参数，跳过参数处理
+        return;
+    }
+
+    // 处理函数参数
+    for (size_t i = 0; i < currentFunctionParams.size(); i++) {
+        // 创建参数变量
+        std::shared_ptr<Operand> paramVar = std::make_shared<Operand>(OperandType::VARIABLE, currentFunctionParams[i]);
+        
+        // 获取参数变量的栈偏移
+        int offset = getOperandOffset(paramVar);
+        
+        // 从参数寄存器保存到栈
+        if (i < 8) {
+            std::string argReg = getArgRegister(i);
+            emitInstruction("sw " + argReg + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            // 对于超过8个的参数，它们在调用方的栈上
+            // 需要从调用方的栈中加载
+            std::string tempReg = allocTempReg();
+            int callerStackOffset = (i - 8) * 4 + 16; // 16是保存的fp和ra
+            emitInstruction("lw " + tempReg + ", " + std::to_string(callerStackOffset) + "(fp)");
+            emitInstruction("sw " + tempReg + ", " + std::to_string(offset) + "(fp)");
+            freeTempReg(tempReg);
+        }
+    }
 }
 
 // 处理函数结束指令
@@ -489,6 +562,11 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
     
     // 添加空行以提高可读性
     output << "\n";
+
+    // 清除函数上下文
+    currentFunction = "";
+    currentFunctionReturnType = "";
+    currentFunctionParams.clear();
 }
 
 // 生成函数序言
@@ -672,11 +750,23 @@ void CodeGenerator::restoreCallerSavedRegs() {
 // 保存被调用者保存的寄存器
 void CodeGenerator::saveCalleeSavedRegs() {
     // 实现被调用者保存的寄存器保存，如果需要的话
+    emitComment("保存被调用者保存的寄存器");
+    
+    // 保存s0-s11寄存器(除了s0/fp)
+    for (int i = 1; i <= 11; i++) {
+        emitInstruction("sw s" + std::to_string(i) + ", " + std::to_string(-36 - 8 * 4 - i * 4) + "(fp)");
+    }
 }
 
 // 恢复被调用者保存的寄存器
 void CodeGenerator::restoreCalleeSavedRegs() {
     // 实现被调用者保存的寄存器恢复，如果需要的话
+     emitComment("恢复被调用者保存的寄存器");
+    
+    // 恢复s0-s11寄存器(除了s0/fp)
+    for (int i = 1; i <= 11; i++) {
+        emitInstruction("lw s" + std::to_string(i) + ", " + std::to_string(-36 - 8 * 4 - i * 4) + "(fp)");
+    }
 }
 
 // 初始化寄存器信息
