@@ -44,6 +44,7 @@ test_all: $(TARGET) output
 	./$(TARGET) < test/04_while_break.tc > output/04.s
 	./$(TARGET) < test/05_function_call.tc > output/05.s
 	./$(TARGET) < test/10_void_fn.tc > output/10.s
+	./$(TARGET) < test/15_multiple_return_paths.tc> output/15.s
 	@echo "All tests completed. Outputs in output/ directory"
 
 # 运行所有测试（带优化）

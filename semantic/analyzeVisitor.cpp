@@ -360,80 +360,74 @@ void analyzeVisitor::visit(ReturnStmt &stmt)
     hasReturn = true;
 }
 
-
 // 访问函数定义
 void analyzeVisitor::visit(FunctionDef &funcDef)
 {
-    // 构建当前函数的函数信息结构体，以放进函数表
-    FunctionInfo info;
-    info.line = funcDef.line;
-    info.column = funcDef.column;
+    int line = funcDef.line;
+    int column = funcDef.column;
+    std::string name = funcDef.name;
 
-    // 函数名称在全局的唯一性
-    if (functionTable.find(funcDef.name) != functionTable.end())
-    {
-        helper.error("Duplicate function name", info.line, info.column);
+    // 函数名不能重复
+    if (functionTable.count(name)) {
+        helper.error("Duplicate function name", line, column);
     }
 
-    // 续函数信息
+    // 构建函数信息（完整）
+    FunctionInfo info;
     info.returnType = funcDef.returnType;
-    for (const auto &param : funcDef.params)
-    {
-        info.paramTypes.push_back("int"); // ToyC中所有参数都是int
+    info.line = line;
+    info.column = column;
+    for (const auto &param : funcDef.params) {
+        info.paramTypes.push_back("int");
         info.paramNames.push_back(param.name);
     }
 
-    // 如果是main函数，检查其合法性
-    if (funcDef.name == "main" && !helper.isValidMainFunction(funcDef))
-    {
-        helper.error("Invalid main function declaration", info.line, info.column);
+    // 提前注册函数信息（支持递归）
+    functionTable[name] = info;
+
+    // 检查 main 函数合法性
+    if (name == "main" && !helper.isValidMainFunction(funcDef)) {
+        helper.error("Invalid main function declaration", line, column);
     }
 
-    // 设置当前函数的（全局）上下文
-    currentFunction = funcDef.name;
+    // 设置当前上下文
+    currentFunction = name;
     currentFunctionReturnType = funcDef.returnType;
     hasReturn = false;
 
-    // 进入新作用域(即创建新的符号表压入栈)
+    // 进入新作用域
     helper.enterScope();
 
-    // 添加函数名到当前作用域的符号表
-    Symbol symbol(Symbol::Kind::FUNCTION, funcDef.returnType, info.line, info.column);
-    symbol.used = (funcDef.name == "main"); // main函数默认为已使用
-    helper.declareSymbol(funcDef.name, symbol);
+    // 注册函数符号
+    Symbol funcSymbol(Symbol::Kind::FUNCTION, funcDef.returnType, line, column);
+    funcSymbol.used = (name == "main");
+    helper.declareSymbol(name, funcSymbol);
 
-    // 添加参数到当前作用域的符号表
-    for (size_t i = 0; i < funcDef.params.size(); i++)
-    {
+    // 注册参数符号
+    for (size_t i = 0; i < funcDef.params.size(); i++) {
         const auto &param = funcDef.params[i];
-        Symbol symbol(Symbol::Kind::PARAMETER, "int", info.line, info.column, i);
-        symbol.used = false; // 初始设置为未使用
-        if (!helper.declareSymbol(param.name, symbol))
-        {
-            helper.error("Parameter '" + param.name + "' already declared", info.line, info.column);
+        Symbol paramSymbol(Symbol::Kind::PARAMETER, "int", line, column, i);
+        paramSymbol.used = false;
+        if (!helper.declareSymbol(param.name, paramSymbol)) {
+            helper.error("Parameter '" + param.name + "' already declared", line, column);
         }
     }
 
-    // 分析函数体
-    // 覆盖了函数体内有return关键字的情况
+    // 访问函数体
     funcDef.body->accept(*this);
 
-    // 函数体内无return关键字的情况
-    if (funcDef.returnType != "void" && !hasReturn)
-    {
-        helper.error("Function '" + funcDef.name + "' has no return statement", info.line, info.column);
+    // 检查 return 语句是否遗漏
+    if (funcDef.returnType != "void" && !hasReturn) {
+        helper.error("Function '" + name + "' has no return statement", line, column);
     }
 
-    // 检查未使用的参数和局部变量
+    // 检查未使用的局部变量和参数
     checkUnusedVariables();
-
-    // 当前函数加入函数表
-    functionTable[currentFunction] = info;
 
     // 离开作用域
     helper.exitScope();
 
-    // 清除当前函数上下文
+    // 清除上下文
     currentFunction = "";
     currentFunctionReturnType = "";
     hasReturn = false;

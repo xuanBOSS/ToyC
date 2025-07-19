@@ -1,0 +1,62 @@
+# 由ToyC编译器生成
+# RISC-V汇编代码
+.text
+	.global main
+main:
+# 函数序言
+	addi sp, sp, -112
+	sw ra, 108(sp)
+	sw fp, 104(sp)
+	addi fp, sp, 112
+# 保存被调用者保存的寄存器
+	sw s1, -72(fp)
+	sw s2, -76(fp)
+	sw s3, -80(fp)
+	sw s4, -84(fp)
+	sw s5, -88(fp)
+	sw s6, -92(fp)
+	sw s7, -96(fp)
+	sw s8, -100(fp)
+	sw s9, -104(fp)
+	sw s10, -108(fp)
+	sw s11, -112(fp)
+# x = 5
+	li t0, 5
+	sw t0, -4(fp)
+# t0 = x > 0
+	lw t2, -4(fp)
+	li t3, 0
+	slt t1, t3, t2
+	sw t1, -8(fp)
+# t1 = !t0
+	lw t5, -8(fp)
+	seqz t4, t5
+	sw t4, -12(fp)
+# if t1 goto L0
+	lw t6, -12(fp)
+	bnez t6, L0
+# return 1
+	li a0, 1
+	j main_epilogue
+L0:
+# return 0
+	li a0, 0
+	j main_epilogue
+main_epilogue:
+# 函数后记
+# 恢复被调用者保存的寄存器
+	lw s1, -72(fp)
+	lw s2, -76(fp)
+	lw s3, -80(fp)
+	lw s4, -84(fp)
+	lw s5, -88(fp)
+	lw s6, -92(fp)
+	lw s7, -96(fp)
+	lw s8, -100(fp)
+	lw s9, -104(fp)
+	lw s10, -108(fp)
+	lw s11, -112(fp)
+	lw fp, 104(sp)
+	lw ra, 108(sp)
+	addi sp, sp, 112
+	ret
