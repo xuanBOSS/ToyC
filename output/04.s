@@ -4,10 +4,10 @@
 	.global main
 main:
 # 函数序言
-	addi sp, sp, -8
-	sw ra, 4(sp)
-	sw fp, 0(sp)
-	addi fp, sp, 8
+	addi sp, sp, -112
+	sw ra, 108(sp)
+	sw fp, 104(sp)
+	addi fp, sp, 112
 # 保存被调用者保存的寄存器
 	sw s1, -72(fp)
 	sw s2, -76(fp)
@@ -77,7 +77,7 @@ main_epilogue:
 	lw s9, -104(fp)
 	lw s10, -108(fp)
 	lw s11, -112(fp)
-	lw fp, 0(sp)
-	lw ra, 4(sp)
-	addi sp, sp, 8
+	lw fp, 104(sp)
+	lw ra, 108(sp)
+	addi sp, sp, 112
 	ret

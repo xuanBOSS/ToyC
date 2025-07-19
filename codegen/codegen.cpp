@@ -399,6 +399,12 @@ void CodeGenerator::processParam(const std::shared_ptr<ParamInstr>& instr) {
 // 处理函数调用指令
 // 准备参数，调用函数，处理返回值
 void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
+    // 添加空指针检查
+    if (!instr) {
+        std::cerr << "错误: 空的函数调用指令" << std::endl;
+        return;
+    }
+
     emitComment(instr->toString());
     
     // 获取参数个数
@@ -411,7 +417,13 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     } else if (!paramQueue.empty()) {
         // 兼容旧代码，使用 paramQueue
         if (paramQueue.size() >= paramCount) {
-            params.assign(paramQueue.end() - paramCount, paramQueue.end());
+            //params.assign(paramQueue.end() - paramCount, paramQueue.end());
+            // 添加安全检查，确保不会访问越界
+            size_t startIdx = paramQueue.size() - paramCount;
+            params.reserve(paramCount);
+            for (size_t i = 0; i < paramCount && (startIdx + i) < paramQueue.size(); ++i) {
+                params.push_back(paramQueue[startIdx + i]);
+            }
         } else {
             std::cerr << "错误: 参数队列大小不匹配, 预期 " << paramCount 
                       << ", 实际 " << paramQueue.size() << std::endl;
@@ -427,25 +439,63 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     saveCallerSavedRegs();
     
     // 处理参数 - 先处理寄存器传递的参数（前8个）
+    // int stackParamSize = 0;
+    // for (int i = 0; i < paramCount; i++) {
+    //     if (i < 8) {
+    //         // 通过寄存器传递的参数（RISC-V ABI 规定前8个参数通过 a0-a7 传递）
+    //         std::string argReg = getArgRegister(i);
+    //         loadOperand(paramQueue[paramQueue.size() - paramCount + i], argReg);
+    //     } else {
+    //         // 超过8个参数需要通过栈传递
+    //         std::string tempReg = allocTempReg();
+    //         loadOperand(paramQueue[paramQueue.size() - paramCount + i], tempReg);
+            
+    //         // 参数在调用者的栈帧中，相对于 sp 的偏移为 stackParamSize
+    //         emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamSize) + "(sp)");
+    //         stackParamSize += 4; // 假设所有参数大小为4字节
+            
+    //         freeTempReg(tempReg);
+    //     }
+    // }
+    // 处理参数 - 先处理寄存器传递的参数（前8个）
     int stackParamSize = 0;
-    for (int i = 0; i < paramCount; i++) {
+    for (int i = 0; i < paramCount && i < params.size(); i++) {
+        // 添加空指针检查
+        if (!params[i]) {
+            std::cerr << "错误: 参数 " << i << " 为空" << std::endl;
+            continue;
+        }
+        
         if (i < 8) {
             // 通过寄存器传递的参数（RISC-V ABI 规定前8个参数通过 a0-a7 传递）
             std::string argReg = getArgRegister(i);
-            loadOperand(paramQueue[paramQueue.size() - paramCount + i], argReg);
+            
+            // 使用安全索引访问
+            size_t paramIndex = paramQueue.size() - paramCount + i;
+            if (paramIndex < paramQueue.size()) {
+                loadOperand(paramQueue[paramIndex], argReg);
+            } else {
+                std::cerr << "错误: 参数索引越界: " << paramIndex << std::endl;
+            }
         } else {
             // 超过8个参数需要通过栈传递
             std::string tempReg = allocTempReg();
-            loadOperand(paramQueue[paramQueue.size() - paramCount + i], tempReg);
             
-            // 参数在调用者的栈帧中，相对于 sp 的偏移为 stackParamSize
-            emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamSize) + "(sp)");
-            stackParamSize += 4; // 假设所有参数大小为4字节
+            // 使用安全索引访问
+            size_t paramIndex = paramQueue.size() - paramCount + i;
+            if (paramIndex < paramQueue.size()) {
+                loadOperand(paramQueue[paramIndex], tempReg);
+                
+                // 参数在调用者的栈帧中，相对于 sp 的偏移为 stackParamSize
+                emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamSize) + "(sp)");
+                stackParamSize += 4; // 假设所有参数大小为4字节
+            } else {
+                std::cerr << "错误: 参数索引越界: " << paramIndex << std::endl;
+            }
             
             freeTempReg(tempReg);
         }
     }
-    
     // 如果有栈传递的参数，需要调整栈指针
     if (stackParamSize > 0) {
         emitInstruction("addi sp, sp, -" + std::to_string(stackParamSize));
@@ -474,7 +524,7 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
         storeRegister(resultReg, instr->result);
         freeTempReg(resultReg);
     }
-}
+}                                     
 
 // 处理返回指令
 // 如果有返回值，将其加载到a0寄存器，然后跳转到函数结束处理
@@ -503,6 +553,12 @@ void CodeGenerator::processLabel(const std::shared_ptr<LabelInstr>& instr) {
 // 处理函数开始指令
 // 初始化函数上下文，生成函数标签和序言
 void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInstr>& instr) {
+    // 添加空指针检查
+    if (!instr) {
+        std::cerr << "错误: 空的函数开始指令" << std::endl;
+        return;
+    }
+    
     currentFunction = instr->funcName;
     currentFunctionReturnType = instr->returnType;
     if (instr) {
@@ -515,6 +571,14 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     localVars.clear();
     frameInitialized = false;
     
+    // 为函数参数预分配栈空间
+    for (size_t i = 0; i < currentFunctionParams.size(); i++) {
+        // 参数变量的偏移量计算
+        int offset = -4 * (i + 1);
+        localVars[currentFunctionParams[i]] = offset;
+        stackSize += 4;
+    }
+
     // 生成函数标签
     emitGlobal(instr->funcName);
     emitLabel(instr->funcName);
@@ -575,9 +639,14 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     emitComment("函数序言");
     
     //计算帧大小（包括保存的寄存器和局部变量空间）
-    // 8字节用于保存ra和fp，其他根据函数需要的栈空间计算
-    int frameSize = 8 + stackSize;
+    // 8字节用于保存ra和fp
+    // 44字节用于保存s1-s11寄存器（11*4=44）
+    // 56字节用于保存t0-t6和a0-a7寄存器（(7+8)*4=60）
+    int frameSize = 8 + 44 + 60 + stackSize;
     
+    // 确保栈对齐到16字节
+    frameSize = (frameSize + 15) & ~15;
+
     // 保存返回地址和帧指针
     // 1. 分配栈空间
     emitInstruction("addi sp, sp, -" + std::to_string(frameSize));
@@ -676,6 +745,12 @@ void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<
 // 获取操作数的栈偏移
 // 如果操作数尚未分配栈空间，则分配新的栈空间
 int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
+    // 添加空指针检查
+    if (!op) {
+        std::cerr << "错误: 空操作数" << std::endl;
+        return 0;
+    }
+
     if (op->type != OperandType::VARIABLE && op->type != OperandType::TEMP) {
         std::cerr << "错误: 只有变量和临时变量有栈偏移" << std::endl;
         return 0;
@@ -686,6 +761,16 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
         return it->second;
     }
     
+    // 检查是否是函数参数
+    for (size_t i = 0; i < currentFunctionParams.size(); i++) {
+        if (currentFunctionParams[i] == op->name) {
+            // 参数变量的偏移量计算
+            int offset = -4 * (i + 1);
+            localVars[op->name] = offset;
+            return offset;
+        }
+    }
+
     // 为变量分配栈空间
     stackSize += 4;
     int offset = -stackSize;

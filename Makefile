@@ -43,6 +43,7 @@ test_all: $(TARGET) output
 	./$(TARGET) < test/03_if_else.tc > output/03.s
 	./$(TARGET) < test/04_while_break.tc > output/04.s
 	./$(TARGET) < test/05_function_call.tc > output/05.s
+	./$(TARGET) < test/10_void_fn.tc > output/10.s
 	@echo "All tests completed. Outputs in output/ directory"
 
 # 运行所有测试（带优化）
@@ -60,6 +61,6 @@ debug_test: $(TARGET) output
 	@echo "Running first test with debug output..."
 	./$(TARGET) < test/01_minimal.tc > output/01.s
 	@echo "Debug test completed."
-	
+
 # 伪目标
 .PHONY: all clean test_sample test_all test_all_opt output
