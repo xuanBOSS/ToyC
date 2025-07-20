@@ -21,6 +21,9 @@ int main(int argc, char* argv[]) {
             break;
         }
     }
+
+    // 是否打印生成的中间代码
+    bool enablePrintIR = true;
     
     std::cerr << "程序开始执行\n";
     // 从标准输入读取源代码
@@ -55,7 +58,7 @@ int main(int argc, char* argv[]) {
     irGenerator.generate(ast);
     
     // 可选：打印IR用于调试（输出到stderr不影响标准输出）
-    if (enableOptimization) {
+    if (enablePrintIR) {
         std::cerr << "Optimization enabled." << std::endl;
         IRPrinter::print(irGenerator.getInstructions(), std::cerr);
     }
