@@ -561,22 +561,26 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     
     currentFunction = instr->funcName;
     currentFunctionReturnType = instr->returnType;
-    if (instr) {
-        currentFunctionParams = instr->paramNames;
-    } else {
-        currentFunctionParams.clear();
-    }
+    currentFunctionParams = instr->paramNames;
+
     stackSize = 0;
     frameSize = 8; // 初始为ra和fp的保存空间
     localVars.clear();
     frameInitialized = false;
     
     // 为函数参数预分配栈空间
+    int offset = -12;
     for (size_t i = 0; i < currentFunctionParams.size(); i++) {
         // 参数变量的偏移量计算
-        int offset = -4 * (i + 1);
         localVars[currentFunctionParams[i]] = offset;
+        offset-=4;
         stackSize += 4;
+    }
+
+    // 确保分配足够的栈空间
+    int minStackSize = 120;
+    if (stackSize < minStackSize) {
+        stackSize = minStackSize;
     }
 
     // 生成函数标签
@@ -638,12 +642,15 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
 void CodeGenerator::emitPrologue(const std::string& funcName) {
     emitComment("函数序言");
     
+    // 确保至少分配足够的栈空间
+    int minStackSize = 120;  // 设置一个足够大的最小栈空间
+
     //计算帧大小（包括保存的寄存器和局部变量空间）
     // 8字节用于保存ra和fp
     // 44字节用于保存s1-s11寄存器（11*4=44）
     // 56字节用于保存t0-t6和a0-a7寄存器（(7+8)*4=60）
-    int frameSize = 8 + 44 + 60 + stackSize;
-    
+    //int frameSize = 8 + 44 + 60 + stackSize;
+    int frameSize = 8 + std::max(stackSize, minStackSize);
     // 确保栈对齐到16字节
     frameSize = (frameSize + 15) & ~15;
 
@@ -765,7 +772,8 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
     for (size_t i = 0; i < currentFunctionParams.size(); i++) {
         if (currentFunctionParams[i] == op->name) {
             // 参数变量的偏移量计算
-            int offset = -4 * (i + 1);
+            //int offset = -4 * (i + 1);
+            int offset = -12 - i * 4; // 从-12开始，避开ra和fp的位置
             localVars[op->name] = offset;
             return offset;
         }
@@ -773,13 +781,14 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
 
     // 为变量分配栈空间
     stackSize += 4;
-    int offset = -stackSize;
+    //int offset = -stackSize;
+    int offset = -12 - stackSize; // 从-12开始，避开ra和fp的位置
     localVars[op->name] = offset;
     
-    // 如果栈帧尚未完全初始化，记录可能的最大栈大小
-    if (!frameInitialized) {
-        frameSize = 8 + stackSize; // 8字节用于保存ra和fp
-    }
+    // // 如果栈帧尚未完全初始化，记录可能的最大栈大小
+    // if (!frameInitialized) {
+    //     frameSize = 8 + stackSize; // 8字节用于保存ra和fp
+    // }
     
     return offset;
 }
@@ -838,8 +847,10 @@ void CodeGenerator::saveCalleeSavedRegs() {
     emitComment("保存被调用者保存的寄存器");
     
     // 保存s0-s11寄存器(除了s0/fp)
+    int offset = -12;
     for (int i = 1; i <= 11; i++) {
-        emitInstruction("sw s" + std::to_string(i) + ", " + std::to_string(-36 - 8 * 4 - i * 4) + "(fp)");
+        emitInstruction("sw s" + std::to_string(i) + ", " + std::to_string(offset) + "(fp)");
+        offset-=4;
     }
 }
 
@@ -849,8 +860,10 @@ void CodeGenerator::restoreCalleeSavedRegs() {
      emitComment("恢复被调用者保存的寄存器");
     
     // 恢复s0-s11寄存器(除了s0/fp)
+    int offset = -12;
     for (int i = 1; i <= 11; i++) {
-        emitInstruction("lw s" + std::to_string(i) + ", " + std::to_string(-36 - 8 * 4 - i * 4) + "(fp)");
+        emitInstruction("lw s" + std::to_string(i) + ", " + std::to_string(offset) + "(fp)");
+        offset-=4;
     }
 }
 

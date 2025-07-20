@@ -4,75 +4,75 @@
 	.global main
 main:
 # 函数序言
-	addi sp, sp, -112
-	sw ra, 108(sp)
-	sw fp, 104(sp)
-	addi fp, sp, 112
+	addi sp, sp, -128
+	sw ra, 124(sp)
+	sw fp, 120(sp)
+	addi fp, sp, 128
 # 保存被调用者保存的寄存器
-	sw s1, -72(fp)
-	sw s2, -76(fp)
-	sw s3, -80(fp)
-	sw s4, -84(fp)
-	sw s5, -88(fp)
-	sw s6, -92(fp)
-	sw s7, -96(fp)
-	sw s8, -100(fp)
-	sw s9, -104(fp)
-	sw s10, -108(fp)
-	sw s11, -112(fp)
+	sw s1, -12(fp)
+	sw s2, -16(fp)
+	sw s3, -20(fp)
+	sw s4, -24(fp)
+	sw s5, -28(fp)
+	sw s6, -32(fp)
+	sw s7, -36(fp)
+	sw s8, -40(fp)
+	sw s9, -44(fp)
+	sw s10, -48(fp)
+	sw s11, -52(fp)
 # x = 3
 	li t0, 3
-	sw t0, -4(fp)
+	sw t0, -136(fp)
 # t0 = x > 2
-	lw t2, -4(fp)
+	lw t2, -136(fp)
 	li t3, 2
 	slt t1, t3, t2
-	sw t1, -8(fp)
+	sw t1, -140(fp)
 # t1 = !t0
-	lw t5, -8(fp)
+	lw t5, -140(fp)
 	seqz t4, t5
-	sw t4, -12(fp)
+	sw t4, -144(fp)
 # if t1 goto L0
-	lw t6, -12(fp)
+	lw t6, -144(fp)
 	bnez t6, L0
 # t2 = x + 1
-	lw t1, -4(fp)
+	lw t1, -136(fp)
 	li t2, 1
 	add t0, t1, t2
-	sw t0, -16(fp)
+	sw t0, -148(fp)
 # x = t2
-	lw t3, -16(fp)
-	sw t3, -4(fp)
+	lw t3, -148(fp)
+	sw t3, -136(fp)
 # goto L1
 	j L1
 L0:
 # t3 = x - 1
-	lw t5, -4(fp)
+	lw t5, -136(fp)
 	li t6, 1
 	sub t4, t5, t6
-	sw t4, -20(fp)
+	sw t4, -152(fp)
 # x = t3
-	lw t0, -20(fp)
-	sw t0, -4(fp)
+	lw t0, -152(fp)
+	sw t0, -136(fp)
 L1:
 # return x
-	lw a0, -4(fp)
+	lw a0, -136(fp)
 	j main_epilogue
 main_epilogue:
 # 函数后记
 # 恢复被调用者保存的寄存器
-	lw s1, -72(fp)
-	lw s2, -76(fp)
-	lw s3, -80(fp)
-	lw s4, -84(fp)
-	lw s5, -88(fp)
-	lw s6, -92(fp)
-	lw s7, -96(fp)
-	lw s8, -100(fp)
-	lw s9, -104(fp)
-	lw s10, -108(fp)
-	lw s11, -112(fp)
-	lw fp, 104(sp)
-	lw ra, 108(sp)
-	addi sp, sp, 112
+	lw s1, -12(fp)
+	lw s2, -16(fp)
+	lw s3, -20(fp)
+	lw s4, -24(fp)
+	lw s5, -28(fp)
+	lw s6, -32(fp)
+	lw s7, -36(fp)
+	lw s8, -40(fp)
+	lw s9, -44(fp)
+	lw s10, -48(fp)
+	lw s11, -52(fp)
+	lw fp, 120(sp)
+	lw ra, 124(sp)
+	addi sp, sp, 128
 	ret
