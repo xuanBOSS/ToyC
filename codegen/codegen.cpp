@@ -230,8 +230,9 @@ void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
 
 // 处理二元操作指令
 // 为二元运算生成相应的RISC-V汇编代码
+// AND 和 OR 要短路求值
 void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr) {
-    emitComment(instr->toString());
+    /*emitComment(instr->toString());
     
     // 获取临时寄存器
     std::string resultReg = allocTempReg();
@@ -302,7 +303,257 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
     // 释放临时寄存器
     freeTempReg(rightReg);
     freeTempReg(leftReg);
+    freeTempReg(resultReg);*/
+
+    emitComment(instr->toString());
+
+    
+
+    // 获取临时寄存器
+
+    std::string resultReg = allocTempReg();
+
+    
+
+    // 特殊处理逻辑运算符的短路求值
+
+    if (instr->opcode == OpCode::AND || instr->opcode == OpCode::OR) {
+
+        std::string leftReg = allocTempReg();
+
+        
+
+        // 加载左操作数
+
+        loadOperand(instr->left, leftReg);
+
+        
+
+        // 为短路求值生成标签
+
+        std::string endLabel = genLabel();
+
+        std::string shortCircuitLabel = genLabel();
+
+        
+
+        if (instr->opcode == OpCode::AND) {
+
+            // 对于 AND：如果左操作数为假，直接跳转到短路标签
+
+            emitInstruction("beqz " + leftReg + ", " + shortCircuitLabel);
+
+            
+
+            // 左操作数为真，计算右操作数
+
+            std::string rightReg = allocTempReg();
+
+            loadOperand(instr->right, rightReg);
+
+            
+
+            // 将右操作数转换为布尔值（0或1）
+
+            emitInstruction("snez " + resultReg + ", " + rightReg);
+
+            freeTempReg(rightReg);
+
+            
+
+            // 跳转到结束
+
+            emitInstruction("j " + endLabel);
+
+            
+
+            // 短路标签：结果为假（0）
+
+            emitLabel(shortCircuitLabel);
+
+            emitInstruction("li " + resultReg + ", 0");
+
+            
+
+        } else { // OpCode::OR
+
+            // 对于 OR：如果左操作数为真，直接跳转到短路标签
+
+            emitInstruction("bnez " + leftReg + ", " + shortCircuitLabel);
+
+            
+
+            // 左操作数为假，计算右操作数
+
+            std::string rightReg = allocTempReg();
+
+            loadOperand(instr->right, rightReg);
+
+            
+
+            // 将右操作数转换为布尔值（0或1）
+
+            emitInstruction("snez " + resultReg + ", " + rightReg);
+
+            freeTempReg(rightReg);
+
+            
+
+            // 跳转到结束
+
+            emitInstruction("j " + endLabel);
+
+            
+
+            // 短路标签：结果为真（1）
+
+            emitLabel(shortCircuitLabel);
+
+            emitInstruction("li " + resultReg + ", 1");
+
+        }
+
+        
+
+        // 结束标签
+
+        emitLabel(endLabel);
+
+        
+
+        // 释放左操作数寄存器
+
+        freeTempReg(leftReg);
+
+        
+
+    } else {
+
+        // 其他二元操作符的处理保持不变
+
+        std::string leftReg = allocTempReg();
+
+        std::string rightReg = allocTempReg();
+
+
+
+        // 加载操作数
+
+        loadOperand(instr->left, leftReg);
+
+        loadOperand(instr->right, rightReg);
+
+        
+
+        // 根据操作码生成相应的指令
+
+        switch (instr->opcode) {
+
+            case OpCode::ADD:
+
+                emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::SUB:
+
+                emitInstruction("sub " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::MUL:
+
+                emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::DIV:
+
+                emitInstruction("div " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::MOD:
+
+                emitInstruction("rem " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::LT:
+
+                emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                break;
+
+            case OpCode::GT:
+
+                emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
+
+                break;
+
+            case OpCode::LE:
+
+                emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
+
+                emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
+
+                break;
+
+            case OpCode::GE:
+
+                emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
+
+                break;
+
+            case OpCode::EQ:
+
+                emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                emitInstruction("seqz " + resultReg + ", " + resultReg);
+
+                break;
+
+            case OpCode::NE:
+
+                emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
+
+                emitInstruction("snez " + resultReg + ", " + resultReg);
+
+                break;
+
+            default:
+
+                std::cerr << "错误: 未知的二元操作" << std::endl;
+
+                break;
+
+        }
+
+        
+
+        // 释放临时寄存器
+
+        freeTempReg(rightReg);
+
+        freeTempReg(leftReg);
+
+    }
+
+    
+
+    // 存储结果
+
+    storeRegister(resultReg, instr->result);
+
+    
+
+    // 释放结果寄存器
+
     freeTempReg(resultReg);
+
+
 }
 
 // 处理一元操作指令

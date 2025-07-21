@@ -967,7 +967,7 @@ void IRGenerator::visit(BinaryExpr& expr) {
  * @return 结果操作数
  */
 std::shared_ptr<Operand> IRGenerator::generateShortCircuitAnd(BinaryExpr& expr) {
-    // 评估左操作数
+    /*// 评估左操作数
     expr.left->accept(*this);
     std::shared_ptr<Operand> left = getTopOperand();
     
@@ -995,6 +995,78 @@ std::shared_ptr<Operand> IRGenerator::generateShortCircuitAnd(BinaryExpr& expr) 
     // 结束
     addInstruction(std::make_shared<LabelInstr>(endLabel->name));
     
+    return result;*/
+
+    // 评估左操作数
+
+    expr.left->accept(*this);
+
+    std::shared_ptr<Operand> left = getTopOperand();
+
+    
+
+    // 创建结果临时变量和短路标签
+
+    std::shared_ptr<Operand> result = createTemp();
+
+    std::shared_ptr<Operand> shortCircuitLabel = createLabel();
+
+    std::shared_ptr<Operand> endLabel = createLabel();
+
+    
+
+    // 如果左操作数为假（0），短路
+
+    // 因为IfGotoInstr在条件为真时跳转，所以需要翻转条件
+
+    //addInstruction(std::make_shared<IfGotoInstr>(left, shortCircuitLabel));
+
+    
+
+    // 创建左操作数的否定
+
+    std::shared_ptr<Operand> notLeft = createTemp();
+
+    addInstruction(std::make_shared<UnaryOpInstr>(OpCode::NOT, notLeft, left));
+
+    
+
+    // 如果左操作数为假（0），短路
+
+    addInstruction(std::make_shared<IfGotoInstr>(notLeft, shortCircuitLabel));
+
+   
+
+    // 左操作数为真，评估右操作数
+
+    expr.right->accept(*this);
+
+    std::shared_ptr<Operand> right = getTopOperand();
+
+    
+
+    // 结果为右操作数
+
+    addInstruction(std::make_shared<AssignInstr>(result, right));
+
+    addInstruction(std::make_shared<GotoInstr>(endLabel));
+
+    
+
+    // 短路：结果为假（0）
+
+    addInstruction(std::make_shared<LabelInstr>(shortCircuitLabel->name));
+
+    addInstruction(std::make_shared<AssignInstr>(result, std::make_shared<Operand>(0)));
+
+    
+
+    // 结束
+
+    addInstruction(std::make_shared<LabelInstr>(endLabel->name));
+
+    
+
     return result;
 }
 
