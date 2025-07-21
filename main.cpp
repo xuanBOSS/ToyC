@@ -27,9 +27,39 @@ int main(int argc, char* argv[]) {
     
     std::cerr << "程序开始执行\n";
     // 从标准输入读取源代码
-    std::stringstream buffer;
+    /*std::stringstream buffer;
     buffer << std::cin.rdbuf();
+    std::string source = buffer.str();*/
+
+    //从指定文件读入源代码
+    std::stringstream buffer;
+    std::string filename;
+    
+    // 处理命令行参数
+    for (int i = 1; i < argc; ++i) {
+        std::string arg = argv[i];
+        if (arg == "-opt") {
+            enableOptimization = true;
+        } else {
+            filename = arg; // 将不是 -opt 的参数作为文件名处理
+        }
+    }
+    
+    // 从文件或标准输入读取源代码
+    if (!filename.empty()) {
+        std::ifstream inputFile(filename);
+        if (!inputFile) {
+            std::cerr << "Error: Cannot open file " << filename << std::endl;
+            return 1;
+        }
+        buffer << inputFile.rdbuf();
+    } else {
+        buffer << std::cin.rdbuf();
+    }
+    
     std::string source = buffer.str();
+    
+
     std::cerr << "初始化完成，开始编译\n";
 
     // 词法分析

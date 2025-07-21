@@ -30,6 +30,14 @@ public:
     bool isTemp() const { return type == OperandType::TEMP; } // 检查操作数是否为临时变量
 };
 
+/*
+    临时变量的三个分析方法
+*/
+bool isProcessableReg(const Operand& op); // 判断操作数是否需要作为寄存器处理（临时变量或命名变量）
+std::vector<std::string> extractReg(const std::shared_ptr<Operand>& op);// 从单个操作数提取寄存器名（若非寄存器类型返回空）
+std::vector<std::string> collectRegs(const std::initializer_list<std::shared_ptr<Operand>>& ops);//多操作数合并
+
+
 // 指令操作码
 enum class OpCode {
     ADD, SUB, MUL, DIV, MOD,   // 算术运算
@@ -49,9 +57,14 @@ public:
     OpCode opcode;
     
     IRInstr(OpCode opcode) : opcode(opcode) {}
-    virtual ~IRInstr() {}
+    virtual ~IRInstr();
     // 将指令转换为字符串表示（纯虚函数，由子类实现）
     virtual std::string toString() const = 0;
+
+    //临时变量分析相关函数
+    virtual std::vector<std::string> getDefRegisters();
+    virtual std::vector<std::string> getUseRegisters();
+
 };
 
 // 二元运算指令
@@ -68,6 +81,15 @@ public:
         : IRInstr(opcode), result(result), left(left), right(right) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override{
+        return extractReg(result);  // 目标操作数（如 t0）
+    }
+    
+    std::vector<std::string> getUseRegisters() override{
+        return collectRegs({left, right});  // 两个源操作数
+    }
 };
 
 // 一元运算指令
@@ -82,6 +104,15 @@ public:
         : IRInstr(opcode), result(result), operand(operand) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override{
+        return extractReg(result);
+    }
+
+    std::vector<std::string> getUseRegisters()override{
+        return extractReg(operand);
+    }
 };
 
 // 赋值指令
@@ -95,6 +126,15 @@ public:
         : IRInstr(OpCode::ASSIGN), target(target), source(source) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override{
+        return extractReg(target);  // 目标变量
+    }
+    
+    std::vector<std::string> getUseRegisters() override {
+        return extractReg(source);  // 源变量
+    }
 };
 
 // 跳转指令
@@ -106,6 +146,15 @@ public:
         : IRInstr(OpCode::GOTO), target(target) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+        
+    std::vector<std::string> getUseRegisters() override {
+        return {};  
+    }
 };
 
 // 条件跳转指令
@@ -119,6 +168,15 @@ public:
         : IRInstr(OpCode::IF_GOTO), condition(condition), target(target) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+            
+    std::vector<std::string> getUseRegisters() override {
+        return extractReg(condition);  
+    }
 };
 
 // 函数参数指令
@@ -130,6 +188,15 @@ public:
         : IRInstr(OpCode::PARAM), param(param) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+            
+    std::vector<std::string> getUseRegisters() override {
+        return extractReg(param);  
+    }
 };
 
 // 函数调用指令
@@ -147,6 +214,21 @@ public:
         : IRInstr(OpCode::CALL), result(result), funcName(funcName), paramCount(paramCount) {}
     
     std::string toString() const override;
+
+    //临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        auto defs = extractReg(result);
+        return defs;
+    }
+
+    std::vector<std::string> getUseRegisters() override {
+        std::vector<std::string> regs;
+        for (const auto& param : params) {
+            auto r = extractReg(param);
+            regs.insert(regs.end(), r.begin(), r.end());
+        }
+        return regs;
+    }
 };
 
 // 返回指令
@@ -158,6 +240,15 @@ public:
         : IRInstr(OpCode::RETURN), value(value) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+                
+    std::vector<std::string> getUseRegisters() override {
+        return extractReg(value);  
+    }
 };
 
 // 标签指令
@@ -169,6 +260,15 @@ public:
         : IRInstr(OpCode::LABEL), label(label) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+                
+    std::vector<std::string> getUseRegisters() override {
+        return {};  
+    }
 };
 
 // 函数开始指令
@@ -182,6 +282,15 @@ public:
         : IRInstr(OpCode::FUNCTION_BEGIN), funcName(funcName), returnType(returnType) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+                
+    std::vector<std::string> getUseRegisters() override {
+        return {};  
+    }
 };
 
 // 函数结束指令
@@ -193,6 +302,15 @@ public:
         : IRInstr(OpCode::FUNCTION_END), funcName(funcName) {}
     
     std::string toString() const override;
+
+    // 临时变量分析相关函数
+    std::vector<std::string> getDefRegisters() override {
+        return {};  
+    }
+                
+    std::vector<std::string> getUseRegisters() override {
+        return {};  
+    }
 };
 
 // IRPrinter - IR输出器，用于将IR指令序列输出为文本

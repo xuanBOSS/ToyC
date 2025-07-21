@@ -51,7 +51,15 @@ private:
     int labelCount = 0;                        // 标签计数器
     int stackSize = 0;                         // 当前函数栈帧大小
     int frameSize = 0;                         // 当前函数帧大小
+    int localVarsSize = 0;                     // 局部变量占用空间
+    int calleeRegsSize = 0;                    // 被调用者寄存器保存区大小
+    int callerRegsSize = 0;                    // 调用者寄存器保存区大小
+    int paramStackSize = 0;                    // 栈传递参数区大小
     bool frameInitialized = false;             // 栈帧是否已初始化
+    std::set<std::string> usedCalleeSavedRegs;  // 实际使用的被调用者保存寄存器
+    std::set<std::string> usedCallerSavedRegs;  // 实际使用的调用者保存寄存器
+    std::map<std::string, int> regOffsetMap;  // 记录寄存器到栈偏移量的映射
+    int currentStackOffset = 0;                   // 当前栈顶偏移
     
     // 当前函数的上下文信息
     std::string currentFunction;               // 当前处理的函数名
@@ -155,9 +163,31 @@ private:
     
     // 寄存器管理
     void initializeRegisters();      // 初始化寄存器信息
+    void resetStackOffset();         // 初始化栈顶偏移
     void allocateRegisters();        // 根据策略分配寄存器
     bool isValidRegister(const std::string& reg) const;  // 检查寄存器名是否有效
     std::string getArgRegister(int paramIndex) const;    // 获取参数寄存器名
+    void analyzeUsedCalleeSavedRegs();                   //分析未使用的被调用者保存寄存器
+    void analyzeUsedCallerSavedRegs();                   //分析未使用的调用者保存寄存器
+    int getRegisterStackOffset(const std::string& reg);  //返回被调用者保存寄存器在当前函数栈帧中的偏移地址
+    int getCallerSavedRegsSize() const {                // 获取调用者寄存器保存区大小
+        // 每个寄存器占4字节
+        return usedCallerSavedRegs.size() * 4;  
+    }
+    int getCalleeSavedRegsSize() const {                // 获取被调用者保存寄存器占用的栈空间大小
+        return usedCalleeSavedRegs.size() * 4;
+    }
+    int getTotalFrameSize() const {
+        int total = getCalleeSavedRegsSize() + localVarsSize + 8; // +8 for ra/fp
+        return (total + 15) & ~15; // 16-byte aligned
+    }
+    int getLocalVarsSize() const {                      // 获取局部变量区大小
+        return localVarsSize; 
+    }
+    // 增加局部变量区大小
+    void incrementLocalVarsSize(int size) {             // 增加局部变量区大小
+        localVarsSize += size;
+    }
     
     // 函数管理
     void emitPrologue(const std::string& funcName);  // 生成函数序言
@@ -172,6 +202,19 @@ private:
     // 分析方法
     // 分析变量生命周期，结果存储在varLifetimes中
     void analyzeVariableLifetimes(std::map<std::string, std::pair<int, int>>& varLifetimes);
+
+    int analyzeTempVars();      //遍历指令序列，记录临时变量的生命周期和冲突关系
+
+    // 判断是否为临时寄存器（如虚拟寄存器或物理临时寄存器t0-t6）
+    bool isTempReg(const std::string& reg) {
+        return reg[0] == 't';
+        //return reg[0] == 't' || isVirtualReg(reg);  // 当前代码未使用虚拟寄存器
+    }
+    // 检查寄存器是否已分配到物理寄存器（无需栈空间）
+    bool isRegisterAllocated(const std::string& reg) {
+        return regAlloc.find(reg) != regAlloc.end();
+    }
+
     // 构建变量冲突图
     std::map<std::string, std::set<std::string>> buildInterferenceGraph();
 };

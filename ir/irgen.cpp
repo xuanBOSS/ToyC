@@ -24,6 +24,45 @@
  */
 
 //------------------------------------------------------------------------------
+// 临时变量分析的方法
+//------------------------------------------------------------------------------
+// 判断操作数是否需要作为寄存器处理（临时变量或命名变量）
+bool isProcessableReg(const Operand& op) 
+{
+    return op.type == OperandType::TEMP || op.type == OperandType::VARIABLE;
+}
+
+// 从单个操作数提取寄存器名（若非寄存器类型返回空）
+std::vector<std::string> extractReg(const std::shared_ptr<Operand>& op) 
+{
+    if (op && isProcessableReg(*op)) {
+        return {op->name};  // 返回变量名（无论VARIABLE还是TEMP）
+    }
+    return {};  // 忽略常量(CONSTANT)和标签(LABEL)
+}
+
+//多操作数合并
+std::vector<std::string> collectRegs(
+    const std::initializer_list<std::shared_ptr<Operand>>& ops) 
+{
+    std::vector<std::string> regs;
+    for (const auto& op : ops) {
+        auto r = extractReg(op);
+        regs.insert(regs.end(), r.begin(), r.end());
+    }
+    return regs;
+}
+
+IRInstr::~IRInstr() = default;
+
+std::vector<std::string> IRInstr::getDefRegisters() {
+    return {};
+}
+std::vector<std::string> IRInstr::getUseRegisters() {
+    return {};
+}
+
+//------------------------------------------------------------------------------
 // IR指令字符串表示方法
 //------------------------------------------------------------------------------
 
