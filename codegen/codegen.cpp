@@ -980,37 +980,6 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
 void CodeGenerator::emitPrologue(const std::string& funcName) {
     emitComment("函数序言");
     
-    // 确保至少分配足够的栈空间
-    /*int minStackSize = 120;  // 设置一个足够大的最小栈空间
-
-    //计算帧大小（包括保存的寄存器和局部变量空间）
-    // 8字节用于保存ra和fp
-    // 44字节用于保存s1-s11寄存器（11*4=44）
-    // 56字节用于保存t0-t6和a0-a7寄存器（(7+8)*4=60）
-    //int frameSize = 8 + 44 + 60 + stackSize;
-    int frameSize = 8 + std::max(stackSize, minStackSize);
-    // 确保栈对齐到16字节
-    frameSize = (frameSize + 15) & ~15;
-
-    // 保存返回地址和帧指针
-    // 1. 分配栈空间
-    emitInstruction("addi sp, sp, -" + std::to_string(frameSize));
-    // 2. 保存返回地址(ra)到栈顶
-    emitInstruction("sw ra, " + std::to_string(frameSize - 4) + "(sp)");
-    // 3. 保存帧指针(fp)到栈顶下一个位置
-    emitInstruction("sw fp, " + std::to_string(frameSize - 8) + "(sp)");
-    
-    // 设置新的帧指针
-    // 指向当前函数调用前的栈顶
-    emitInstruction("addi fp, sp, " + std::to_string(frameSize));
-    
-    // 保存被调用者保存的寄存器
-    // 这些寄存器需要在函数返回前恢复原值
-    saveCalleeSavedRegs();
-
-    frameInitialized = true;
-    this->frameSize = frameSize;*/
-
     //重置栈帧偏移量
     resetStackOffset();
 
@@ -1025,17 +994,53 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     int localsAndPadding = analyzeTempVars();  // 分析临时变量需求
     int totalFrameSize = calleeRegsSize + callerRegsSize + localsAndPadding + 8; // +8 for ra/fp
     totalFrameSize = (totalFrameSize + 15) & ~15;      // 最终16字节对齐
-
+//---------------------修改18-----------------------------
     // 3. 分配栈空间
-    emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
+    //emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
 
     // 4. 保存关键寄存器
-    emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
-    emitInstruction("sw fp, " + std::to_string(totalFrameSize - 8) + "(sp)");
+    //emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
+    //emitInstruction("sw fp, " + std::to_string(totalFrameSize - 8) + "(sp)");
 
     // 5. 设置新帧指针（指向旧sp）
-    emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
+    //emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
 
+    // 3. 分配栈空间
+    // 修改这部分：
+    if (totalFrameSize <= 2048) {
+        emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
+    } else {
+        // 栈帧太大，需要使用多条指令
+        emitInstruction("li t0, -" + std::to_string(totalFrameSize));
+        emitInstruction("add sp, sp, t0");
+    }
+
+    // 4. 保存关键寄存器
+    // 修改这部分：
+    if (totalFrameSize - 4 <= 2047) {
+        emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
+    } else {
+        emitInstruction("li t0, " + std::to_string(totalFrameSize - 4));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("sw ra, 0(t0)");
+    }
+    
+    if (totalFrameSize - 8 <= 2047) {
+        emitInstruction("sw fp, " + std::to_string(totalFrameSize - 8) + "(sp)");
+    } else {
+        emitInstruction("li t0, " + std::to_string(totalFrameSize - 8));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("sw fp, 0(t0)");
+    }
+
+    // 5. 设置新帧指针（指向旧sp）
+    if (totalFrameSize <= 2048) {
+        emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
+    } else {
+        emitInstruction("li t0, " + std::to_string(totalFrameSize));
+        emitInstruction("add fp, sp, t0");
+    }
+//---------------------修改18-----------------------------
     // 6. 保存被调用者寄存器
     saveCalleeSavedRegs();
 
@@ -1051,21 +1056,47 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
     
     // 恢复被调用者保存的寄存器
     restoreCalleeSavedRegs();
-    
+//---------------------修改18------------------------
+
     // 恢复帧指针和返回地址
-    emitInstruction("lw fp, " + std::to_string(frameSize - 8) + "(sp)");
-    emitInstruction("lw ra, " + std::to_string(frameSize - 4) + "(sp)");
+    //emitInstruction("lw fp, " + std::to_string(frameSize - 8) + "(sp)");
+    //emitInstruction("lw ra, " + std::to_string(frameSize - 4) + "(sp)");
     
     // 调整栈指针
-    emitInstruction("addi sp, sp, " + std::to_string(frameSize));
+    //emitInstruction("addi sp, sp, " + std::to_string(frameSize));
     
+    // 恢复帧指针和返回地址
+    if (frameSize - 8 <= 2047) {
+        emitInstruction("lw fp, " + std::to_string(frameSize - 8) + "(sp)");
+    } else {
+        emitInstruction("li t0, " + std::to_string(frameSize - 8));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("lw fp, 0(t0)");
+    }
+    
+    if (frameSize - 4 <= 2047) {
+        emitInstruction("lw ra, " + std::to_string(frameSize - 4) + "(sp)");
+    } else {
+        emitInstruction("li t0, " + std::to_string(frameSize - 4));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("lw ra, 0(t0)");
+    }
+    
+    // 调整栈指针
+    if (frameSize <= 2048) {
+        emitInstruction("addi sp, sp, " + std::to_string(frameSize));
+    } else {
+        emitInstruction("li t0, " + std::to_string(frameSize));
+        emitInstruction("add sp, sp, t0");
+    }
+//---------------------修改18------------------------
     // 返回
     emitInstruction("ret");
 }
 
 // 加载操作数到寄存器
 // 根据操作数类型生成不同的加载指令
-void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
+/*void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
     switch (op->type) {
         case OperandType::CONSTANT: // 常量操作数
             emitInstruction("li " + reg + ", " + std::to_string(op->value));
@@ -1097,11 +1128,50 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
             std::cerr << "错误: 未知的操作数类型" << std::endl;
             break;
     }
+}*/
+//-----------------------修改18------------------------------
+void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
+    switch (op->type) {
+        case OperandType::CONSTANT:
+            emitInstruction("li " + reg + ", " + std::to_string(op->value));
+            break;
+            
+        case OperandType::VARIABLE:
+        case OperandType::TEMP:
+            {
+                auto it = regAlloc.find(op->name);
+                if (it != regAlloc.end() && isValidRegister(it->second)) {
+                    emitInstruction("addi " + reg + ", " + it->second + ", 0");
+                } else {
+                    // 从栈中加载
+                    int offset = getOperandOffset(op);
+                    if (std::abs(offset) <= 2047) {
+                        emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
+                    } else {
+                        // 偏移量太大，需要先计算地址
+                        std::string tempReg = (reg != "t0") ? "t0" : "t1";
+                        emitInstruction("li " + tempReg + ", " + std::to_string(offset));
+                        emitInstruction("add " + tempReg + ", fp, " + tempReg);
+                        emitInstruction("lw " + reg + ", 0(" + tempReg + ")");
+                    }
+                }
+            }
+            break;
+            
+        case OperandType::LABEL:
+            std::cerr << "警告: 尝试加载标签操作数" << std::endl;
+            break;
+            
+        default:
+            std::cerr << "错误: 未知的操作数类型" << std::endl;
+            break;
+    }
 }
+//----------------------------修改18-----------------------
 
 // 存储寄存器内容到操作数
 // 根据操作数是否分配了寄存器，生成不同的存储指令
-void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
+/*void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
     if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
         // 检查是否已分配到寄存器
         auto it = regAlloc.find(op->name);
@@ -1119,7 +1189,33 @@ void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<
     } else {
         std::cerr << "错误: 无法存储到非变量操作数" << std::endl;
     }
+}*/
+//-----------------------修改18----------------------------
+void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
+    if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
+        auto it = regAlloc.find(op->name);
+        if (it != regAlloc.end() && isValidRegister(it->second)) {
+            if (reg != it->second) {
+                emitInstruction("addi " + it->second + ", " + reg + ", 0");
+            }
+        } else {
+            // 存储到栈中
+            int offset = getOperandOffset(op);
+            if (std::abs(offset) <= 2047) {
+                emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
+            } else {
+                // 偏移量太大，需要先计算地址
+                std::string tempReg = (reg != "t0") ? "t0" : "t1";
+                emitInstruction("li " + tempReg + ", " + std::to_string(offset));
+                emitInstruction("add " + tempReg + ", fp, " + tempReg);
+                emitInstruction("sw " + reg + ", 0(" + tempReg + ")");
+            }
+        }
+    } else {
+        std::cerr << "错误: 无法存储到非变量操作数" << std::endl;
+    }
 }
+//---------------------------修改18--------------------------------
 
 // 获取操作数的栈偏移
 // 如果操作数尚未分配栈空间，则分配新的栈空间
@@ -1222,21 +1318,11 @@ void CodeGenerator::freeTempReg(const std::string& reg) {
     // 简化实现，不做实际释放，只是记录一下
 }
 
+//----------------------修改18------------------------------
 // 保存调用者保存的寄存器
-void CodeGenerator::saveCallerSavedRegs() {
+/*void CodeGenerator::saveCallerSavedRegs() {
     // 保存调用者保存的寄存器
     emitComment("保存调用者保存的寄存器");
-    
-    // 例如，保存临时寄存器t0-t6和参数寄存器a0-a7
-    /*for (int i = 0; i < 7; i++) {
-        emitInstruction("sw t" + std::to_string(i) + ", " + std::to_string(-12 - i * 4) + "(fp)");
-    }*/
-
-    // 参数寄存器 a0-a7 (如果需要保存)
-    // 注意：通常只需要保存正在使用的寄存器
-    /*for (int i = 0; i < 8; i++) {
-        emitInstruction("sw a" + std::to_string(i) + ", " + std::to_string(-36 - i * 4) + "(fp)");
-    }*/
 
     for (const auto& reg : usedCallerSavedRegs) {
         int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
@@ -1248,17 +1334,7 @@ void CodeGenerator::saveCallerSavedRegs() {
 void CodeGenerator::restoreCallerSavedRegs() {
     // 恢复调用者保存的寄存器
     emitComment("恢复调用者保存的寄存器");
-    
-    // 参数寄存器 a0-a7
-    /*for (int i = 0; i < 8; i++) {
-        emitInstruction("lw a" + std::to_string(i) + ", " + std::to_string(-36 - i * 4) + "(fp)");
-    }*/
-    
-    // 临时寄存器 t0-t6
-    /*for (int i = 0; i < 7; i++) {
-        emitInstruction("lw t" + std::to_string(i) + ", " + std::to_string(-8 - i * 4) + "(fp)");
-    }*/
-    
+
     for (const auto& reg : usedCallerSavedRegs) {
         int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
         emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
@@ -1270,13 +1346,6 @@ void CodeGenerator::saveCalleeSavedRegs() {
     // 实现被调用者保存的寄存器保存，如果需要的话
     emitComment("保存被调用者保存的寄存器");
     
-    // 保存s0-s11寄存器(除了s0/fp)
-    /*int offset = -12;
-    for (int i = 1; i <= 11; i++) {
-        emitInstruction("sw s" + std::to_string(i) + ", " + std::to_string(offset) + "(fp)");
-        offset-=4;
-    }*/
-
     for (const auto& reg : usedCalleeSavedRegs) {
         int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
         emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
@@ -1288,20 +1357,79 @@ void CodeGenerator::saveCalleeSavedRegs() {
 void CodeGenerator::restoreCalleeSavedRegs() {
     // 实现被调用者保存的寄存器恢复，如果需要的话
      emitComment("恢复被调用者保存的寄存器");
-    
-    // 恢复s0-s11寄存器(除了s0/fp)
-    /*int offset = -12;
-    for (int i = 1; i <= 11; i++) {
-        emitInstruction("lw s" + std::to_string(i) + ", " + std::to_string(offset) + "(fp)");
-        offset-=4;
-    }*/
 
     for (const auto& reg : usedCalleeSavedRegs) {
         int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
         emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
     }
     
+}*/
+// 保存调用者保存的寄存器
+void CodeGenerator::saveCallerSavedRegs() {
+    emitComment("保存调用者保存的寄存器");
+    
+    for (const auto& reg : usedCallerSavedRegs) {
+        int offset = getRegisterStackOffset(reg);
+        if (std::abs(offset) <= 2047) {
+            emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            emitInstruction("li t0, " + std::to_string(offset));
+            emitInstruction("add t0, fp, t0");
+            emitInstruction("sw " + reg + ", 0(t0)");
+        }
+    }
 }
+
+// 恢复调用者保存的寄存器
+void CodeGenerator::restoreCallerSavedRegs() {
+    emitComment("恢复调用者保存的寄存器");
+    
+    for (const auto& reg : usedCallerSavedRegs) {
+        int offset = getRegisterStackOffset(reg);
+        if (std::abs(offset) <= 2047) {
+            emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            emitInstruction("li t0, " + std::to_string(offset));
+            emitInstruction("add t0, fp, t0");
+            emitInstruction("lw " + reg + ", 0(t0)");
+        }
+    }
+}
+
+// 保存被调用者保存的寄存器
+void CodeGenerator::saveCalleeSavedRegs() {
+    emitComment("保存被调用者保存的寄存器");
+    
+    for (const auto& reg : usedCalleeSavedRegs) {
+        int offset = getRegisterStackOffset(reg);
+        if (std::abs(offset) <= 2047) {
+            emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            emitInstruction("li t0, " + std::to_string(offset));
+            emitInstruction("add t0, fp, t0");
+            emitInstruction("sw " + reg + ", 0(t0)");
+        }
+    }
+}
+
+// 恢复被调用者保存的寄存器
+void CodeGenerator::restoreCalleeSavedRegs() {
+    emitComment("恢复被调用者保存的寄存器");
+    
+    for (const auto& reg : usedCalleeSavedRegs) {
+        int offset = getRegisterStackOffset(reg);
+        if (std::abs(offset) <= 2047) {
+            emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
+        } else {
+            emitInstruction("li t0, " + std::to_string(offset));
+            emitInstruction("add t0, fp, t0");
+            emitInstruction("lw " + reg + ", 0(t0)");
+        }
+    }
+}
+
+
+//----------------------修改18------------------------------
 
 // 初始化寄存器信息
 void CodeGenerator::initializeRegisters() {

@@ -60,7 +60,9 @@ test_all_opt: $(TARGET) output
 # 添加一个调试目标
 debug_test: $(TARGET) output
 	@echo "Running first test with debug output..."
-	./$(TARGET) < test/05_function_call.tc > output/05.s
+	./$(TARGET) < test/18_many_variables.tc > output/18.s
+	./$(TARGET) < test/19_many_arguments.tc > output/19.s
+	./$(TARGET) < test/20_comprehensive.tc > output/20.s
 	@echo "Debug test completed."
 
 # 伪目标
