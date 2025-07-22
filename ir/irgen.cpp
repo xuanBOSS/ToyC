@@ -262,6 +262,9 @@ std::shared_ptr<Operand> IRGenerator::getTopOperand() {
  * 在进入新的代码块、函数或源代码中的其他作用域定义结构时调用。
  */
 void IRGenerator::enterScope() {
+//------------------------修改7-------------------------------
+    scopeDepth++;
+//------------------------修改7-------------------------------
     scopeStack.push_back(std::map<std::string, std::shared_ptr<Operand>>());
 }
 
@@ -272,6 +275,9 @@ void IRGenerator::enterScope() {
  * 在退出代码块、函数或其他作用域定义结构时调用。
  */
 void IRGenerator::exitScope() {
+//------------------------修改7-------------------------------
+    scopeDepth--;
+//------------------------修改7-------------------------------
     if (!scopeStack.empty()) {
         scopeStack.pop_back();
     }
@@ -342,7 +348,7 @@ void IRGenerator::defineVariable(const std::string& name, std::shared_ptr<Operan
  * @param name 要获取或创建的变量名
  * @return 变量操作数的共享指针
  */
-std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name) {
+/*std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name) {
     // 首先在现有作用域中查找变量
     std::shared_ptr<Operand> var = findVariable(name);
     if (var) {
@@ -353,7 +359,30 @@ std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name) {
     var = std::make_shared<Operand>(OperandType::VARIABLE, name);
     defineVariable(name, var);
     return var;
+}*/
+//--------------------------修改7------------------------------
+std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name, bool createInCurrentScope) {
+    if (createInCurrentScope) {
+        // 为变量声明：使用带作用域信息的唯一名称创建新变量
+        std::string scopedName = getScopedVariableName(name);
+        std::shared_ptr<Operand> var = std::make_shared<Operand>(OperandType::VARIABLE, scopedName);
+        defineVariable(name, var);  // 在符号表中仍使用原始名称作为键
+        return var;
+    }
+    
+    // 为变量使用：在所有作用域中查找
+    std::shared_ptr<Operand> var = findVariable(name);
+    if (var) {
+        return var;
+    }
+    
+    // 变量不存在，创建新的（通常发生在函数参数）
+    std::string scopedName = getScopedVariableName(name);
+    var = std::make_shared<Operand>(OperandType::VARIABLE, scopedName);
+    defineVariable(name, var);
+    return var;
 }
+//--------------------------修改7------------------------------
 
 /**
  * 将IR指令写入文件。
@@ -967,106 +996,39 @@ void IRGenerator::visit(BinaryExpr& expr) {
  * @return 结果操作数
  */
 std::shared_ptr<Operand> IRGenerator::generateShortCircuitAnd(BinaryExpr& expr) {
-    /*// 评估左操作数
-    expr.left->accept(*this);
-    std::shared_ptr<Operand> left = getTopOperand();
-    
-    // 创建结果临时变量和短路标签
-    std::shared_ptr<Operand> result = createTemp();
-    std::shared_ptr<Operand> shortCircuitLabel = createLabel();
-    std::shared_ptr<Operand> endLabel = createLabel();
-    
-    // 如果左操作数为假（0），短路
-    // 因为IfGotoInstr在条件为真时跳转，所以需要翻转条件
-    addInstruction(std::make_shared<IfGotoInstr>(left, shortCircuitLabel));
-    
-    // 左操作数为真，评估右操作数
-    expr.right->accept(*this);
-    std::shared_ptr<Operand> right = getTopOperand();
-    
-    // 结果为右操作数
-    addInstruction(std::make_shared<AssignInstr>(result, right));
-    addInstruction(std::make_shared<GotoInstr>(endLabel));
-    
-    // 短路：结果为假（0）
-    addInstruction(std::make_shared<LabelInstr>(shortCircuitLabel->name));
-    addInstruction(std::make_shared<AssignInstr>(result, std::make_shared<Operand>(0)));
-    
-    // 结束
-    addInstruction(std::make_shared<LabelInstr>(endLabel->name));
-    
-    return result;*/
-
     // 评估左操作数
-
     expr.left->accept(*this);
-
     std::shared_ptr<Operand> left = getTopOperand();
 
-    
-
     // 创建结果临时变量和短路标签
-
     std::shared_ptr<Operand> result = createTemp();
-
     std::shared_ptr<Operand> shortCircuitLabel = createLabel();
-
     std::shared_ptr<Operand> endLabel = createLabel();
 
-    
-
     // 如果左操作数为假（0），短路
-
     // 因为IfGotoInstr在条件为真时跳转，所以需要翻转条件
-
     //addInstruction(std::make_shared<IfGotoInstr>(left, shortCircuitLabel));
-
-    
-
     // 创建左操作数的否定
-
     std::shared_ptr<Operand> notLeft = createTemp();
-
     addInstruction(std::make_shared<UnaryOpInstr>(OpCode::NOT, notLeft, left));
 
-    
-
     // 如果左操作数为假（0），短路
-
     addInstruction(std::make_shared<IfGotoInstr>(notLeft, shortCircuitLabel));
 
-   
-
     // 左操作数为真，评估右操作数
-
     expr.right->accept(*this);
-
     std::shared_ptr<Operand> right = getTopOperand();
 
-    
-
     // 结果为右操作数
-
     addInstruction(std::make_shared<AssignInstr>(result, right));
-
     addInstruction(std::make_shared<GotoInstr>(endLabel));
 
-    
-
     // 短路：结果为假（0）
-
     addInstruction(std::make_shared<LabelInstr>(shortCircuitLabel->name));
-
     addInstruction(std::make_shared<AssignInstr>(result, std::make_shared<Operand>(0)));
 
-    
-
     // 结束
-
     addInstruction(std::make_shared<LabelInstr>(endLabel->name));
-
-    
-
     return result;
 }
 
@@ -1211,7 +1173,7 @@ void IRGenerator::visit(ExprStmt& stmt) {
  * 
  * @param stmt 变量声明语句
  */
-void IRGenerator::visit(VarDeclStmt& stmt) {
+/*void IRGenerator::visit(VarDeclStmt& stmt) {
     std::shared_ptr<Operand> var = getVariable(stmt.name);
     
     if (stmt.initializer) {
@@ -1220,8 +1182,20 @@ void IRGenerator::visit(VarDeclStmt& stmt) {
         
         addInstruction(std::make_shared<AssignInstr>(var, value));
     }
+}*/
+//---------------------------修改7-----------------------------
+void IRGenerator::visit(VarDeclStmt& stmt) {
+    // 关键修改：使用 createInCurrentScope = true，强制在当前作用域创建新变量
+    std::shared_ptr<Operand> var = getVariable(stmt.name, true);
+    
+    if (stmt.initializer) {
+        stmt.initializer->accept(*this);
+        std::shared_ptr<Operand> value = getTopOperand();
+        
+        addInstruction(std::make_shared<AssignInstr>(var, value));
+    }
 }
-
+//---------------------------修改7-----------------------------
 /**
  * 访问赋值语句。
  * 
@@ -1418,25 +1392,26 @@ void IRGenerator::visit(FunctionDef& funcDef) {
 
     // 函数开始
     auto funcBeginInstr = std::make_shared<FunctionBeginInstr>(funcDef.name, funcDef.returnType);
-    
+
+
     // 添加参数名列表
     for (const auto& param : funcDef.params) {
         funcBeginInstr->paramNames.push_back(param.name);
     }
     
     addInstruction(funcBeginInstr);
-    
+  
     // 进入新的作用域
     enterScope();
 
     // 函数参数
     for (const auto& param : funcDef.params) {
-        getVariable(param.name); // 确保参数变量被创建
+       getVariable(param.name); // 确保参数变量被创建
     }
     
     // 函数体
     funcDef.body->accept(*this);
-    
+  
     // 确保有返回指令
     if (funcDef.returnType == "void") {
         addInstruction(std::make_shared<ReturnInstr>());

@@ -60,7 +60,7 @@ test_all_opt: $(TARGET) output
 # 添加一个调试目标
 debug_test: $(TARGET) output
 	@echo "Running first test with debug output..."
-	./$(TARGET) < test/01_minimal.tc > output/01.s
+	./$(TARGET) < test/07_scope_shadow.tc > output/07.s
 	@echo "Debug test completed."
 
 # 伪目标

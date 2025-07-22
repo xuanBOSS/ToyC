@@ -112,8 +112,17 @@ public:
     
 private:
     // 获取或创建变量操作数
-    std::shared_ptr<Operand> getVariable(const std::string& name);
+    //std::shared_ptr<Operand> getVariable(const std::string& name);
+//-----------------------修改7--------------------------
+    std::shared_ptr<Operand> getVariable(const std::string& name, bool createInCurrentScope = false);
+
+    int scopeDepth = 0;  // 当前作用域深度
     
+    // 生成带作用域信息的变量名
+    std::string getScopedVariableName(const std::string& name) {
+        return name + "_scope" + std::to_string(scopeDepth);
+    }
+//-----------------------修改7--------------------------
     // 作用域管理
     void enterScope();
     void exitScope();
