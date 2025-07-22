@@ -925,6 +925,9 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
         return;
     }
 
+    // 清空localvars
+    localVars.clear();
+
     // 处理函数参数
     emitComment("函数形参压栈");
     for (size_t i = 0; i < currentFunctionParams.size(); i++) {
