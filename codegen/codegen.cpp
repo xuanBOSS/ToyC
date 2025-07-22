@@ -810,15 +810,7 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
 
     // 6.2 栈参数
     int stackParamOffset = callerRegsSize + calleeRegsSize; // 栈参数起始偏移
-    /*for (int i = 8; i < paramCount; ++i) {
-        if (!params[i]) continue;
-        std::string tempReg = allocTempReg();
-        loadOperand(params[i], tempReg);
-        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
-        stackParamOffset += 4;
-        freeTempReg(tempReg);
-    }*/
-    for (int i = paramCount - 1; i >= 8; --i) {
+    for (int i = 8; i < paramCount; ++i) {
         if (!params[i]) continue;
         std::string tempReg = allocTempReg();
         loadOperand(params[i], tempReg);
@@ -826,6 +818,14 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
         stackParamOffset += 4;
         freeTempReg(tempReg);
     }
+    /*for (int i = paramCount - 1; i >= 8; --i) {
+        if (!params[i]) continue;
+        std::string tempReg = allocTempReg();
+        loadOperand(params[i], tempReg);
+        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
+        stackParamOffset += 4;
+        freeTempReg(tempReg);
+    }*/
 
     // 7. 调用函数
     emitInstruction("call " + instr->funcName);
@@ -956,7 +956,8 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
             // 对于超过8个的参数，它们在调用方的栈上
             // 需要从调用方的栈中加载
             std::string tempReg = allocTempReg();
-            int callerStackOffset = (i - 8) * 4 ; 
+            //int callerStackOffset = (i - 8) * 4 ; 
+            int callerStackOffset = (currentFunctionParams.size() - i - 1) * 4 ; 
             emitInstruction("lw " + tempReg + ", " + std::to_string(callerStackOffset) + "(fp)");   //从调用者栈加载参数
             emitInstruction("sw " + tempReg + ", " + std::to_string(offset) + "(fp)");              //将参数存入当前栈帧，方便后续访问
             freeTempReg(tempReg);
