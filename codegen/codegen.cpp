@@ -809,13 +809,16 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     }
 
     // 6.2 栈参数
-    int stackParamOffset = callerRegsSize + calleeRegsSize; // 栈参数起始偏移
+    //int stackParamOffset = callerRegsSize + calleeRegsSize; // 栈参数起始偏移
+    int stackParamOffset = currentStackOffset;
     for (int i = 8; i < paramCount; ++i) {
         if (!params[i]) continue;
         std::string tempReg = allocTempReg();
         loadOperand(params[i], tempReg);
-        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
-        stackParamOffset += 4;
+        //emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
+        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(fp)");
+        stackParamOffset -= 4;
+        currentStackOffset -= 4;
         freeTempReg(tempReg);
     }
     /*for (int i = paramCount - 1; i >= 8; --i) {
