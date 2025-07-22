@@ -38,6 +38,8 @@ struct Register {
     bool isAllocatable;      // 是否可分配
     bool isReserved;         // 是否保留
     std::string purpose;     // 寄存器用途
+
+    bool isUsed;             // 是否已被使用
 };
 
 // 代码生成器类
@@ -169,6 +171,8 @@ private:
     std::string getArgRegister(int paramIndex) const;    // 获取参数寄存器名
     void analyzeUsedCalleeSavedRegs();                   //分析未使用的被调用者保存寄存器
     void analyzeUsedCallerSavedRegs();                   //分析未使用的调用者保存寄存器
+    int countUsedCallerSavedRegs();                      // 计算使用的调用者保存寄存器数量
+    int countUsedCalleeSavedRegs();                      // 计算使用的被调用者保存寄存器数量
     int getRegisterStackOffset(const std::string& reg);  //返回被调用者保存寄存器在当前函数栈帧中的偏移地址
     int getCallerSavedRegsSize() const {                // 获取调用者寄存器保存区大小
         // 每个寄存器占4字节

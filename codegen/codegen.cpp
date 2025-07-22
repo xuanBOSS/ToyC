@@ -629,6 +629,9 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
         // 从参数寄存器保存到栈
         if (i < 8) {
             std::string argReg = getArgRegister(i);
+            // 压栈之后从regalloc中删除当前参数的寄存器绑定
+            regAlloc.erase(currentFunctionParams[i]);  // 删除寄存器绑定
+            // 将参数从寄存器保存到栈
             emitInstruction("sw " + argReg + ", " + std::to_string(offset) + "(fp)");
         } else {
             // 对于超过8个的参数，它们在调用方的栈上
@@ -669,13 +672,12 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
 void CodeGenerator::emitPrologue(const std::string& funcName) {
     emitComment("函数序言");
     
-
     //重置栈帧偏移量
     resetStackOffset();
 
     // 1. 分析实际使用的寄存器
-    analyzeUsedCalleeSavedRegs();  // 确定需要保存的s0-s11
-    analyzeUsedCallerSavedRegs();  // 确定需要保存的t0-t6/a0-a7（供后续调用使用）
+    //analyzeUsedCalleeSavedRegs();  // 确定需要保存的s0-s11
+    //analyzeUsedCallerSavedRegs();  // 确定需要保存的t0-t6/a0-a7（供后续调用使用）
 
     // 2. 计算各区域大小
     calleeRegsSize = usedCalleeSavedRegs.size() * 4;  // 被调用者保存寄存器空间
@@ -822,11 +824,30 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
 
 // 分配临时寄存器
 // 从临时寄存器池中轮流分配寄存器
+// 没有处理临时寄存器不够的情况
 std::string CodeGenerator::allocTempReg() {
     if (nextTempReg >= tempRegs.size()) {
         nextTempReg = 0;
+        for(Register& reg : registers) {
+            reg.isUsed = false; // 重置所有寄存器的使用状态
+        }
     }
-    return tempRegs[nextTempReg++];
+    //return tempRegs[nextTempReg++];
+
+    // 修改临时寄存器isUsed状态
+    for(Register& reg : registers) {
+        if (reg.name == tempRegs[nextTempReg]) {
+            if (reg.isUsed) {
+                std::cerr << "错误: 临时寄存器 " << reg.name << " 已经被使用" << std::endl;
+                return ""; // 返回空字符串表示分配失败
+            }
+            reg.isUsed = true; // 标记为已使用
+            usedCallerSavedRegs.insert(reg.name); // 添加到已使用的调用者保存寄存器集合
+            break;
+        }
+    }
+    nextTempReg++;
+    return tempRegs[nextTempReg - 1];
 }
 
 // 释放临时寄存器
@@ -996,15 +1017,42 @@ void CodeGenerator::analyzeUsedCalleeSavedRegs() {
         "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"
     };
 
-    for (const auto& instr : instructions) {
+    /*for (const auto& instr : instructions) {
         std::string s = instr->toString();
         for (const auto& reg : calleeSavedRegs) {
             if (s.find(reg) != std::string::npos) {
                 usedCalleeSavedRegs.insert(reg);
             }
         }
+    }*/
+    // 遍历所有寄存器，检查是否被标记为已使用   
+    for(Register& reg : registers) {
+        if (reg.isCalleeSaved && reg.isUsed) {
+            usedCalleeSavedRegs.insert(reg.name);
+        }
     }
 }
+
+// 根据IR分析被调用者保存寄存器的数量
+int CodeGenerator::countUsedCalleeSavedRegs() {
+    //usedCalleeSavedRegs.clear();
+    int count = 0;
+
+    const std::vector<std::string> calleeSavedRegs = {
+        "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"
+    };
+
+    for (const auto& instr : instructions) {
+        std::string s = instr->toString();
+        for (const auto& reg : calleeSavedRegs) {
+            if (s.find(reg) != std::string::npos) {
+                count++;
+            }
+        }
+    }
+    return count;
+}
+
 
 //分析调用者保存的寄存器
 void CodeGenerator::analyzeUsedCallerSavedRegs() {
@@ -1016,14 +1064,42 @@ void CodeGenerator::analyzeUsedCallerSavedRegs() {
         "ra"   // 返回地址
     };
 
-    for (const auto& instr : instructions) {
+    /*for (const auto& instr : instructions) {
         std::string s = instr->toString();
         for (const auto& reg : callerSavedRegs) {
             if (s.find(reg) != std::string::npos) {
                 usedCallerSavedRegs.insert(reg);
             }
         }
+    }*/
+    // 遍历所有寄存器，检查是否被标记为已使用
+    for(Register& reg : registers) {
+        if (reg.isCallerSaved && reg.isUsed) {
+            usedCallerSavedRegs.insert(reg.name);
+        }
     }
+}
+
+// 根据IR分析调用者保存寄存器的数量
+int CodeGenerator::countUsedCallerSavedRegs() {
+    //usedCallerSavedRegs.clear();
+    int count = 0;
+
+    const std::vector<std::string> callerSavedRegs = {
+        "t0", "t1", "t2", "t3", "t4", "t5", "t6",  // 临时寄存器
+        "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", // 参数寄存器
+        "ra"   // 返回地址
+    };
+
+    for (const auto& instr : instructions) {
+        std::string s = instr->toString();
+        for (const auto& reg : callerSavedRegs) {
+            if (s.find(reg) != std::string::npos) {
+                count++;
+            }
+        }
+    }
+    return count;
 }
 
 int CodeGenerator::getRegisterStackOffset(const std::string& reg) {
