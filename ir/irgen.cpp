@@ -377,8 +377,8 @@ std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name, bool 
     }
     
     // 变量不存在，创建新的（通常发生在函数参数）
-    std::string scopedName = getScopedVariableName(name);
-    var = std::make_shared<Operand>(OperandType::VARIABLE, scopedName);
+    // 对于函数参数，使用原始名称，不生成唯一标识符
+    var = std::make_shared<Operand>(OperandType::VARIABLE, name);  // 使用原始名称
     defineVariable(name, var);
     return var;
 }
@@ -1405,10 +1405,19 @@ void IRGenerator::visit(FunctionDef& funcDef) {
     enterScope();
 
     // 函数参数
-    for (const auto& param : funcDef.params) {
-       getVariable(param.name); // 确保参数变量被创建
-    }
+    // for (const auto& param : funcDef.params) {
+    //    getVariable(param.name); // 确保参数变量被创建
+    // }
     
+//--------------------------修改7----------------------------
+    // 函数参数处理 - 关键修改：使用 createInCurrentScope = false
+    for (const auto& param : funcDef.params) {
+        // 对于函数参数，使用 createInCurrentScope = false，
+        // 这样会使用原始名称，不会生成唯一标识符
+        getVariable(param.name, false);  // 改为 false！
+    }
+//--------------------------修改7-----------------------------
+
     // 函数体
     funcDef.body->accept(*this);
   
