@@ -169,8 +169,8 @@ private:
     void allocateRegisters();        // 根据策略分配寄存器
     bool isValidRegister(const std::string& reg) const;  // 检查寄存器名是否有效
     std::string getArgRegister(int paramIndex) const;    // 获取参数寄存器名
-    void analyzeUsedCalleeSavedRegs();                   //分析未使用的被调用者保存寄存器
-    void analyzeUsedCallerSavedRegs();                   //分析未使用的调用者保存寄存器
+    void analyzeUsedCalleeSavedRegs();                   //分析使用的被调用者保存寄存器
+    void analyzeUsedCallerSavedRegs();                   //分析使用的调用者保存寄存器
     int countUsedCallerSavedRegs();                      // 计算使用的调用者保存寄存器数量
     int countUsedCalleeSavedRegs();                      // 计算使用的被调用者保存寄存器数量
     int getRegisterStackOffset(const std::string& reg);  //返回被调用者保存寄存器在当前函数栈帧中的偏移地址
