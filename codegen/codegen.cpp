@@ -232,328 +232,128 @@ void CodeGenerator::processInstruction(const std::shared_ptr<IRInstr>& instr) {
 // 为二元运算生成相应的RISC-V汇编代码
 // AND 和 OR 要短路求值
 void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr) {
-    /*emitComment(instr->toString());
-    
-    // 获取临时寄存器
-    std::string resultReg = allocTempReg();
-    std::string leftReg = allocTempReg();
-    std::string rightReg = allocTempReg();
-
-    // 加载操作数
-    loadOperand(instr->left, leftReg);
-    loadOperand(instr->right, rightReg);
-    
-    
-    // 根据操作码生成相应的指令
-    switch (instr->opcode) {
-        case OpCode::ADD:
-            emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::SUB:
-            emitInstruction("sub " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::MUL:
-            emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::DIV:
-            emitInstruction("div " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::MOD:
-            emitInstruction("rem " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::LT:
-            emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::GT:
-            emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
-            break;
-        case OpCode::LE:
-            emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
-            emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-            break;
-        case OpCode::GE:
-            emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
-            emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-            break;
-        case OpCode::EQ:
-            emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
-            emitInstruction("seqz " + resultReg + ", " + resultReg);
-            break;
-        case OpCode::NE:
-            emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
-            emitInstruction("snez " + resultReg + ", " + resultReg);
-            break;
-        case OpCode::AND:
-            emitInstruction("snez " + leftReg + ", " + leftReg);
-            emitInstruction("snez " + rightReg + ", " + rightReg);
-            emitInstruction("and " + resultReg + ", " + leftReg + ", " + rightReg);
-            break;
-        case OpCode::OR:
-            emitInstruction("or " + resultReg + ", " + leftReg + ", " + rightReg);
-            emitInstruction("snez " + resultReg + ", " + resultReg);
-            break;
-        default:
-            std::cerr << "错误: 未知的二元操作" << std::endl;
-            break;
-    }
-    
-    // 存储结果
-    storeRegister(resultReg, instr->result);
-    
-    // 释放临时寄存器
-    freeTempReg(rightReg);
-    freeTempReg(leftReg);
-    freeTempReg(resultReg);*/
-
     emitComment(instr->toString());
 
-    
-
     // 获取临时寄存器
-
     std::string resultReg = allocTempReg();
 
-    
-
     // 特殊处理逻辑运算符的短路求值
-
     if (instr->opcode == OpCode::AND || instr->opcode == OpCode::OR) {
-
         std::string leftReg = allocTempReg();
-
-        
 
         // 加载左操作数
-
         loadOperand(instr->left, leftReg);
-
-        
 
         // 为短路求值生成标签
-
         std::string endLabel = genLabel();
-
         std::string shortCircuitLabel = genLabel();
 
-        
-
         if (instr->opcode == OpCode::AND) {
-
             // 对于 AND：如果左操作数为假，直接跳转到短路标签
-
             emitInstruction("beqz " + leftReg + ", " + shortCircuitLabel);
 
-            
-
             // 左操作数为真，计算右操作数
-
             std::string rightReg = allocTempReg();
-
             loadOperand(instr->right, rightReg);
 
-            
-
             // 将右操作数转换为布尔值（0或1）
-
             emitInstruction("snez " + resultReg + ", " + rightReg);
-
             freeTempReg(rightReg);
 
-            
-
             // 跳转到结束
-
             emitInstruction("j " + endLabel);
-
-            
 
             // 短路标签：结果为假（0）
-
             emitLabel(shortCircuitLabel);
-
             emitInstruction("li " + resultReg + ", 0");
-
-            
-
         } else { // OpCode::OR
-
             // 对于 OR：如果左操作数为真，直接跳转到短路标签
-
             emitInstruction("bnez " + leftReg + ", " + shortCircuitLabel);
 
-            
-
             // 左操作数为假，计算右操作数
-
             std::string rightReg = allocTempReg();
-
             loadOperand(instr->right, rightReg);
 
-            
-
             // 将右操作数转换为布尔值（0或1）
-
             emitInstruction("snez " + resultReg + ", " + rightReg);
-
             freeTempReg(rightReg);
 
-            
-
             // 跳转到结束
-
             emitInstruction("j " + endLabel);
 
-            
-
             // 短路标签：结果为真（1）
-
             emitLabel(shortCircuitLabel);
-
             emitInstruction("li " + resultReg + ", 1");
-
         }
-
-        
 
         // 结束标签
-
         emitLabel(endLabel);
 
-        
-
         // 释放左操作数寄存器
-
-        freeTempReg(leftReg);
-
-        
-
+        freeTempReg(leftReg);       
     } else {
-
         // 其他二元操作符的处理保持不变
-
         std::string leftReg = allocTempReg();
-
         std::string rightReg = allocTempReg();
 
-
-
         // 加载操作数
-
         loadOperand(instr->left, leftReg);
-
         loadOperand(instr->right, rightReg);
 
-        
-
         // 根据操作码生成相应的指令
-
         switch (instr->opcode) {
-
             case OpCode::ADD:
-
                 emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::SUB:
-
                 emitInstruction("sub " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::MUL:
-
                 emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::DIV:
-
                 emitInstruction("div " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::MOD:
-
                 emitInstruction("rem " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::LT:
-
                 emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 break;
-
             case OpCode::GT:
-
                 emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
-
                 break;
-
             case OpCode::LE:
-
                 emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
-
                 emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-
                 break;
-
             case OpCode::GE:
-
                 emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-
                 break;
-
             case OpCode::EQ:
-
                 emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 emitInstruction("seqz " + resultReg + ", " + resultReg);
-
                 break;
-
             case OpCode::NE:
-
                 emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
-
                 emitInstruction("snez " + resultReg + ", " + resultReg);
-
                 break;
-
             default:
-
                 std::cerr << "错误: 未知的二元操作" << std::endl;
-
                 break;
-
         }
 
-        
-
         // 释放临时寄存器
-
         freeTempReg(rightReg);
-
         freeTempReg(leftReg);
-
     }
 
-    
-
     // 存储结果
-
-    storeRegister(resultReg, instr->result);
-
-    
+    storeRegister(resultReg, instr->result);  
 
     // 释放结果寄存器
-
     freeTempReg(resultReg);
-
-
 }
 
 // 处理一元操作指令
@@ -687,173 +487,50 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
         return;
     }
     
-    // 保存调用者保存的寄存器
-    //saveCallerSavedRegs();
-    
-    // 处理参数 - 先处理寄存器传递的参数（前8个）
-    // int stackParamSize = 0;
-    // for (int i = 0; i < paramCount; i++) {
-    //     if (i < 8) {
-    //         // 通过寄存器传递的参数（RISC-V ABI 规定前8个参数通过 a0-a7 传递）
-    //         std::string argReg = getArgRegister(i);
-    //         loadOperand(paramQueue[paramQueue.size() - paramCount + i], argReg);
-    //     } else {
-    //         // 超过8个参数需要通过栈传递
-    //         std::string tempReg = allocTempReg();
-    //         loadOperand(paramQueue[paramQueue.size() - paramCount + i], tempReg);
-            
-    //         // 参数在调用者的栈帧中，相对于 sp 的偏移为 stackParamSize
-    //         emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamSize) + "(sp)");
-    //         stackParamSize += 4; // 假设所有参数大小为4字节
-            
-    //         freeTempReg(tempReg);
-    //     }
-    // }
-
-    // 处理参数 - 先处理寄存器传递的参数（前8个）
-    /*int stackParamSize = 0;
-    for (int i = 0; i < paramCount && i < params.size(); i++) {
-        // 添加空指针检查
-        if (!params[i]) {
-            std::cerr << "错误: 参数 " << i << " 为空" << std::endl;
-            continue;
-        }
-        
-        if (i < 8) {
-            // 通过寄存器传递的参数（RISC-V ABI 规定前8个参数通过 a0-a7 传递）
-            std::string argReg = getArgRegister(i);
-            
-            // 使用安全索引访问
-            size_t paramIndex = paramQueue.size() - paramCount + i;
-            if (paramIndex < paramQueue.size()) {
-                loadOperand(paramQueue[paramIndex], argReg);
-            } else {
-                std::cerr << "错误: 参数索引越界: " << paramIndex << std::endl;
-            }
-        } else {
-            // 超过8个参数需要通过栈传递
-            std::string tempReg = allocTempReg();
-            
-            // 使用安全索引访问
-            size_t paramIndex = paramQueue.size() - paramCount + i;
-            if (paramIndex < paramQueue.size()) {
-                loadOperand(paramQueue[paramIndex], tempReg);
-                
-                // 参数在调用者的栈帧中，相对于 sp 的偏移为 stackParamSize
-                emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamSize) + "(sp)");
-                stackParamSize += 4; // 假设所有参数大小为4字节
-            } else {
-                std::cerr << "错误: 参数索引越界: " << paramIndex << std::endl;
-            }
-            
-            freeTempReg(tempReg);
-        }
-    }
-    // 如果有栈传递的参数，需要调整栈指针
-    if (stackParamSize > 0) {
-        emitInstruction("addi sp, sp, -" + std::to_string(stackParamSize));
-    }
-    
-    // 调用函数
-    emitInstruction("call " + instr->funcName);
-    
-    // 如果调整了栈指针，需要恢复
-    if (stackParamSize > 0) {
-        emitInstruction("addi sp, sp, " + std::to_string(stackParamSize));
-    }
-    
-    // 清除使用过的参数
-    if (paramCount > 0) {
-        paramQueue.erase(paramQueue.end() - paramCount, paramQueue.end());
-    }
-    
-    // 恢复调用者保存的寄存器
-    restoreCallerSavedRegs();
-    
-    // 如果有返回值，存储a0到结果操作数
-    if (instr->result) {
-        std::string resultReg = allocTempReg();
-        emitInstruction("mv " + resultReg + ", a0");
-        storeRegister(resultReg, instr->result);
-        freeTempReg(resultReg);
-    }*/
 
     // 1. 分析需要保存的寄存器
     analyzeUsedCallerSavedRegs();  // 确定哪些调用者寄存器需要保存
     analyzeUsedCalleeSavedRegs();  // 确定哪些被调用者寄存器需要保存
 
-    // 2. 计算栈空间需求
-    /*int stackParamCount = std::max(0, paramCount - 8);  // 需要栈传递的参数数量
-    int stackParamSize = stackParamCount * 4;          // 栈参数总大小
-    int callerRegsSize = usedCallerSavedRegs.size() * 4; // 调用者寄存器保存空间
-    int calleeRegsSize = usedCalleeSavedRegs.size() * 4; // 被调用者寄存器保存空间
-    
-    // 总栈空间（16字节对齐）
-    int totalStackSize = stackParamSize + callerRegsSize + calleeRegsSize;
-    totalStackSize = (totalStackSize + 15) & ~15;
 
-    // 3. 分配栈空间
-    emitInstruction("addi sp, sp, -" + std::to_string(totalStackSize));*/
-
-    // 4. 保存被调用者寄存器（Callee-Saved）
-    //saveCalleeSavedRegs();
-
-    // 5. 保存调用者寄存器（Caller-Saved）
+    // 2. 保存调用者寄存器（Caller-Saved）
     saveCallerSavedRegs();
 
-    // 6. 传递参数
-    // 6.1 寄存器参数（a0-a7）
+    // 3. 传递参数
+    // 3.1 寄存器参数（a0-a7）
     for (int i = 0; i < std::min(8, paramCount); ++i) {
         if (!params[i]) continue;
         loadOperand(params[i], "a" + std::to_string(i));
     }
 
-    // 6.2 栈参数
+    // 3.2 栈参数
     // 越靠近栈顶的参数索引越小
-    //int stackParamOffset = callerRegsSize + calleeRegsSize; // 栈参数起始偏移
     int stackParamOffset = 0;
     for (int i = 8; i < paramCount; ++i) {
         if (!params[i]) continue;
         std::string tempReg = allocTempReg();
         loadOperand(params[i], tempReg);
-        //emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
         emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
         stackParamOffset += 4;
         freeTempReg(tempReg);
     }
 
-
-    /*for (int i = paramCount - 1; i >= 8; --i) {
-        if (!params[i]) continue;
-        std::string tempReg = allocTempReg();
-        loadOperand(params[i], tempReg);
-        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
-        stackParamOffset += 4;
-        freeTempReg(tempReg);
-    }*/
-
-    // 7. 调用函数
+    // 4. 调用函数
     emitInstruction("call " + instr->funcName);
 
-    // 8. 恢复调用者寄存器
+    // 5. 恢复调用者寄存器
     restoreCallerSavedRegs();
 
-    // 9. 恢复被调用者寄存器
-    //restoreCalleeSavedRegs();
-
-    // 10. 释放栈空间
-    //emitInstruction("addi sp, sp, " + std::to_string(totalStackSize));
-
-    // 11. 处理返回值
+    // 6. 处理返回值
     if (instr->result) {
         std::string resultReg = allocTempReg();
-        //emitInstruction("mv " + resultReg + ", a0");      //伪指令
+        //emitInstruction("mv " + resultReg + ", a0");      
         emitInstruction("addi " + resultReg + ", a0" + ", 0");
         storeRegister(resultReg, instr->result);
         freeTempReg(resultReg);
     }
 
-    // 12. 清除已使用的参数
+    // 7. 清除已使用的参数
     if (!instr->params.empty() && paramCount > 0) {
         paramQueue.erase(paramQueue.end() - paramCount, paramQueue.end());
     }
@@ -898,7 +575,7 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
     currentFunctionParams = instr->paramNames;
 
     // 重置栈相关状态
-    stackSize = 0;
+    //stackSize = 0;
     frameSize = 8;          // 初始为ra和fp的保存空间
     localVarsSize = 0;      // 临时变量的空间
     calleeRegsSize = 0;     // 被调用者保存寄存器占用的空间
@@ -918,12 +595,6 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
             localVars[currentFunctionParams[i]] = -12 - (i-8)*4;  // 跳过ra/fp
             localVarsSize += 4;
         }
-    }
-
-    // 确保分配足够的栈空间
-    int minStackSize = 120;
-    if (stackSize < minStackSize) {
-        stackSize = minStackSize;
     }
 
     // 生成函数标签
@@ -962,7 +633,6 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
             // 需要从调用方的栈中加载
             std::string tempReg = allocTempReg();
             int callerStackOffset = (i - 8) * 4 ; 
-            //int callerStackOffset = (currentFunctionParams.size() - i - 1) * 4; // 从调用者栈加载参数，注意偏移计算
             emitInstruction("lw " + tempReg + ", " + std::to_string(callerStackOffset) + "(fp)");   //从调用者栈加载参数
             emitInstruction("sw " + tempReg + ", " + std::to_string(offset) + "(fp)");              //将参数存入当前栈帧，方便后续访问
             freeTempReg(tempReg);
@@ -989,7 +659,6 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
     regAlloc.clear();                   // 清除寄存器绑定
     localVars.clear();                  // 清除局部变量偏移
     frameInitialized = false;
-    stackSize = 0;
 }
 
 // 生成函数序言
@@ -1000,30 +669,15 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     //重置栈帧偏移量
     resetStackOffset();
 
-    // 1. 分析实际使用的寄存器
-    //analyzeUsedCalleeSavedRegs();  // 确定需要保存的s0-s11
-    //analyzeUsedCallerSavedRegs();  // 确定需要保存的t0-t6/a0-a7（供后续调用使用）
-
-    // 2. 计算各区域大小
+    // 1. 计算各区域大小
     calleeRegsSize = countUsedCalleeSavedRegs() * 4;  // 被调用者保存寄存器空间
     callerRegsSize = countUsedCallerSavedRegs() * 4;  // 调用者保存寄存器空间
-    //int localsAndPadding = (localVarsSize + 15) & ~15; // 局部变量+对齐填充
     int localsAndPadding = analyzeTempVars();  // 分析临时变量需求
     int totalFrameSize = calleeRegsSize + callerRegsSize + localsAndPadding + 8; // +8 for ra/fp
     totalFrameSize = (totalFrameSize + 15) & ~15;      // 最终16字节对齐
     frameSize = totalFrameSize; // 更新当前帧大小
-//---------------------修改18-----------------------------
-    // 3. 分配栈空间
-    //emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
 
-    // 4. 保存关键寄存器
-    //emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
-    //emitInstruction("sw fp, " + std::to_string(totalFrameSize - 8) + "(sp)");
-
-    // 5. 设置新帧指针（指向旧sp）
-    //emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
-
-    // 3. 分配栈空间
+    // 2. 分配栈空间
     // 修改这部分：
     if (totalFrameSize <= 2048) {
         emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
@@ -1033,7 +687,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
         emitInstruction("add sp, sp, t0");
     }
 
-    // 4. 保存关键寄存器
+    // 3. 保存关键寄存器
     // 修改这部分：
     if (totalFrameSize - 4 <= 2047) {
         emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
@@ -1051,7 +705,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
         emitInstruction("sw fp, 0(t0)");
     }
 
-    // 5. 设置新帧指针（指向旧sp）
+    // 4. 设置新帧指针（指向旧sp）
     if (totalFrameSize <= 2048) {
         emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
     } else {
@@ -1059,7 +713,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
         emitInstruction("add fp, sp, t0");
     }
 //---------------------修改18-----------------------------
-    // 6. 保存被调用者寄存器
+    // 5. 保存被调用者寄存器
     saveCalleeSavedRegs();
 
     // 更新状态
@@ -1075,13 +729,6 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
     // 恢复被调用者保存的寄存器
     restoreCalleeSavedRegs();
 //---------------------修改18------------------------
-
-    // 恢复帧指针和返回地址
-    //emitInstruction("lw fp, " + std::to_string(frameSize - 8) + "(sp)");
-    //emitInstruction("lw ra, " + std::to_string(frameSize - 4) + "(sp)");
-    
-    // 调整栈指针
-    //emitInstruction("addi sp, sp, " + std::to_string(frameSize));
     
     // 恢复帧指针和返回地址
     if (frameSize - 8 <= 2047) {
@@ -1112,41 +759,7 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
     emitInstruction("ret");
 }
 
-// 加载操作数到寄存器
-// 根据操作数类型生成不同的加载指令
-/*void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
-    switch (op->type) {
-        case OperandType::CONSTANT: // 常量操作数
-            emitInstruction("li " + reg + ", " + std::to_string(op->value));
-            break;
-            
-        case OperandType::VARIABLE: // 变量操作数
-        case OperandType::TEMP:     // 临时变量操作数
-            {
-                // 检查是否已分配到寄存器
-                auto it = regAlloc.find(op->name);
-                if (it != regAlloc.end() && isValidRegister(it->second)) {
-                    // 如果已分配到寄存器，直接移动
-                    //emitInstruction("mv " + reg + ", " + it->second);     //伪指令
-                    emitInstruction("addi " + reg + ", " + it->second + ", 0");
-                } else {
-                    // 否则从栈中加载
-                    int offset = getOperandOffset(op);
-                    emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
-                }
-            }
-            break;
-            
-        case OperandType::LABEL:  // 标签操作数
-            // 标签通常不直接加载，而是用于跳转
-            std::cerr << "警告: 尝试加载标签操作数" << std::endl;
-            break;
-            
-        default:
-            std::cerr << "错误: 未知的操作数类型" << std::endl;
-            break;
-    }
-}*/
+
 //-----------------------修改18------------------------------
 void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
     switch (op->type) {
@@ -1185,29 +798,7 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
             break;
     }
 }
-//----------------------------修改18-----------------------
 
-// 存储寄存器内容到操作数
-// 根据操作数是否分配了寄存器，生成不同的存储指令
-/*void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
-    if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
-        // 检查是否已分配到寄存器
-        auto it = regAlloc.find(op->name);
-        if (it != regAlloc.end() && isValidRegister(it->second)) {
-            // 如果已分配到寄存器，直接移动
-            if (reg != it->second) {
-                //emitInstruction("mv " + it->second + ", " + reg);     //伪指令
-                emitInstruction("addi " + it->second + ", " + reg + ", 0");
-            }
-        } else {
-            // 否则存储到栈中
-            int offset = getOperandOffset(op);
-            emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
-        }
-    } else {
-        std::cerr << "错误: 无法存储到非变量操作数" << std::endl;
-    }
-}*/
 //-----------------------修改18----------------------------
 void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
     if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
@@ -1255,23 +846,6 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
     }
     
     // 检查是否是函数参数
-    /*for (size_t i = 0; i < currentFunctionParams.size(); i++) {
-        if (currentFunctionParams[i] == op->name) {
-            // 参数变量的偏移量计算
-            //int offset = -4 * (i + 1);
-            int offset = -12 - i * 4; // 从-12开始，避开ra和fp的位置
-            localVars[op->name] = offset;
-            return offset;
-        }
-    }*/
-    /*for (size_t i = 0; i < currentFunctionParams.size(); i++) {
-        if (currentFunctionParams[i] == op->name) {
-            // 参数偏移量 = 寄存器保存区大小 + 参数索引 * 4
-            int offset = getCalleeSavedRegsSize() + getCallerSavedRegsSize() + i * 4;
-            localVars[op->name] = offset;
-            return offset;
-        }
-    }*/
     for (size_t i = 0; i < currentFunctionParams.size(); i++) {
         if (currentFunctionParams[i] == op->name) {
             // 参数偏移量 = 寄存器保存区大小 + 参数索引 * 4
@@ -1281,17 +855,6 @@ int CodeGenerator::getOperandOffset(const std::shared_ptr<Operand>& op) {
             return offset;
         }
     }
-
-    // 为变量分配栈空间
-    //stackSize += 4;
-    //int offset = -stackSize;
-    //int offset = -12 - stackSize; // 从-12开始，避开ra和fp的位置
-    //localVars[op->name] = offset;
-    
-    // // 如果栈帧尚未完全初始化，记录可能的最大栈大小
-    // if (!frameInitialized) {
-    //     frameSize = 8 + stackSize; // 8字节用于保存ra和fp
-    // }
 
     // 分配局部变量空间（从栈顶向下增长）
     //int offset = -getCalleeSavedRegsSize() - getLocalVarsSize() - 4;
@@ -1336,52 +899,7 @@ void CodeGenerator::freeTempReg(const std::string& reg) {
     // 简化实现，不做实际释放，只是记录一下
 }
 
-//----------------------修改18------------------------------
-// 保存调用者保存的寄存器
-/*void CodeGenerator::saveCallerSavedRegs() {
-    // 保存调用者保存的寄存器
-    emitComment("保存调用者保存的寄存器");
 
-    for (const auto& reg : usedCallerSavedRegs) {
-        int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
-        emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
-    }
-}
-
-// 恢复调用者保存的寄存器
-void CodeGenerator::restoreCallerSavedRegs() {
-    // 恢复调用者保存的寄存器
-    emitComment("恢复调用者保存的寄存器");
-
-    for (const auto& reg : usedCallerSavedRegs) {
-        int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
-        emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
-    }
-}
-
-// 保存被调用者保存的寄存器
-void CodeGenerator::saveCalleeSavedRegs() {
-    // 实现被调用者保存的寄存器保存，如果需要的话
-    emitComment("保存被调用者保存的寄存器");
-    
-    for (const auto& reg : usedCalleeSavedRegs) {
-        int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
-        emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
-    }
-    
-}
-
-// 恢复被调用者保存的寄存器
-void CodeGenerator::restoreCalleeSavedRegs() {
-    // 实现被调用者保存的寄存器恢复，如果需要的话
-     emitComment("恢复被调用者保存的寄存器");
-
-    for (const auto& reg : usedCalleeSavedRegs) {
-        int offset = getRegisterStackOffset(reg); //返回指定寄存器在栈帧中的偏移地址
-        emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
-    }
-    
-}*/
 // 保存调用者保存的寄存器
 void CodeGenerator::saveCallerSavedRegs() {
     emitComment("保存调用者保存的寄存器");
@@ -1530,15 +1048,6 @@ void CodeGenerator::analyzeUsedCalleeSavedRegs() {
         "s0", "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11"
     };
 
-    /*for (const auto& instr : instructions) {
-        std::string s = instr->toString();
-        for (const auto& reg : calleeSavedRegs) {
-            if (s.find(reg) != std::string::npos) {
-                usedCalleeSavedRegs.insert(reg);
-            }
-        }
-    }*/
-
     // 遍历所有寄存器，检查是否被标记为已使用   
    for(Register& reg : registers) {
         if (reg.isCalleeSaved && reg.isUsed) {
@@ -1576,15 +1085,6 @@ void CodeGenerator::analyzeUsedCallerSavedRegs() {
         "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7", // 参数寄存器
         "ra"   // 返回地址
     };
-
-    /*for (const auto& instr : instructions) {
-        std::string s = instr->toString();
-        for (const auto& reg : callerSavedRegs) {
-            if (s.find(reg) != std::string::npos) {
-                usedCallerSavedRegs.insert(reg);
-            }
-        }
-    }*/
 
     // 遍历所有寄存器，检查是否被标记为已使用
     for(Register& reg : registers) {
@@ -1729,13 +1229,7 @@ void CodeGenerator::optimizeStackLayout() {
     // 更新局部变量映射
     localVars = newOffsets;
     
-    // 重新计算栈大小
-    stackSize = 0;
-    for (const auto& [var, offset] : localVars) {
-        stackSize = std::max(stackSize, -offset);
-    }
-    
-    emitComment("栈布局优化结束，新栈大小: " + std::to_string(stackSize));
+    emitComment("栈布局优化结束，新栈大小: " + std::to_string(frameSize));
 }
 
 //遍历指令序列，记录临时变量的生命周期和冲突关系
@@ -1745,9 +1239,7 @@ int CodeGenerator::analyzeTempVars() {
     
     for (const auto& instr : instructions) {
         // 步骤1: 分析指令的def/use（定义和使用）
-        //auto defRegs = getDefRegisters(instr);
         auto defRegs = instr -> getDefRegisters();  // 指令定义的寄存器
-        //auto useRegs = getUseRegisters(instr); 
         auto useRegs = instr -> getUseRegisters(); // 指令使用的寄存器
         
         // 步骤2: 释放已失效的临时变量

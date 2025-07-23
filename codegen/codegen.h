@@ -51,7 +51,7 @@ private:
     std::map<std::string, std::string> regAlloc; // 变量到寄存器的分配映射
     std::set<std::string> activeVars;          // 当前活跃的变量集合
     int labelCount = 0;                        // 标签计数器
-    int stackSize = 0;                         // 当前函数栈帧大小
+    //int stackSize = 0;                         // 当前函数栈帧大小
     int frameSize = 0;                         // 当前函数帧大小
     int localVarsSize = 0;                     // 局部变量占用空间
     int calleeRegsSize = 0;                    // 被调用者寄存器保存区大小
