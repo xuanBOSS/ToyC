@@ -809,18 +809,20 @@ void CodeGenerator::processCall(const std::shared_ptr<CallInstr>& instr) {
     }
 
     // 6.2 栈参数
+    // 越靠近栈顶的参数索引越小
     //int stackParamOffset = callerRegsSize + calleeRegsSize; // 栈参数起始偏移
-    int stackParamOffset = currentStackOffset;
+    int stackParamOffset = 0;
     for (int i = 8; i < paramCount; ++i) {
         if (!params[i]) continue;
         std::string tempReg = allocTempReg();
         loadOperand(params[i], tempReg);
         //emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
-        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(fp)");
-        stackParamOffset -= 4;
-        currentStackOffset -= 4;
+        emitInstruction("sw " + tempReg + ", " + std::to_string(stackParamOffset) + "(sp)");
+        stackParamOffset += 4;
         freeTempReg(tempReg);
     }
+
+
     /*for (int i = paramCount - 1; i >= 8; --i) {
         if (!params[i]) continue;
         std::string tempReg = allocTempReg();
@@ -959,8 +961,8 @@ void CodeGenerator::processFunctionBegin(const std::shared_ptr<FunctionBeginInst
             // 对于超过8个的参数，它们在调用方的栈上
             // 需要从调用方的栈中加载
             std::string tempReg = allocTempReg();
-            //int callerStackOffset = (i - 8) * 4 ; 
-            int callerStackOffset = (currentFunctionParams.size() - i - 1) * 4 ; 
+            int callerStackOffset = (i - 8) * 4 ; 
+            //int callerStackOffset = (currentFunctionParams.size() - i - 1) * 4; // 从调用者栈加载参数，注意偏移计算
             emitInstruction("lw " + tempReg + ", " + std::to_string(callerStackOffset) + "(fp)");   //从调用者栈加载参数
             emitInstruction("sw " + tempReg + ", " + std::to_string(offset) + "(fp)");              //将参数存入当前栈帧，方便后续访问
             freeTempReg(tempReg);
@@ -1009,6 +1011,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     int localsAndPadding = analyzeTempVars();  // 分析临时变量需求
     int totalFrameSize = calleeRegsSize + callerRegsSize + localsAndPadding + 8; // +8 for ra/fp
     totalFrameSize = (totalFrameSize + 15) & ~15;      // 最终16字节对齐
+    frameSize = totalFrameSize; // 更新当前帧大小
 //---------------------修改18-----------------------------
     // 3. 分配栈空间
     //emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
