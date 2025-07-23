@@ -19,8 +19,8 @@ public:
 
 // IR生成器配置
 struct IRGenConfig {
-    bool enableOptimizations = false;  // 是否启用优化
-    bool generateDebugInfo = false;    // 是否生成调试信息
+    bool enableOptimizations = true;  // 是否启用优化
+    bool generateDebugInfo = true;    // 是否生成调试信息
     bool inlineSmallFunctions = false; // 是否内联小函数
 };
 
@@ -47,7 +47,7 @@ private:
 
     // 生成器配置
     IRGenConfig config;
-    
+
     // 变量作用域管理
     std::vector<std::map<std::string, std::shared_ptr<Operand>>> scopeStack;
 
@@ -142,6 +142,110 @@ private:
     void deadCodeElimination();    // 死代码删除
     void controlFlowOptimization();// 控制流优化
     
+//--------------------增强常量折叠-----------------------   
+    // 立即常量折叠辅助方法
+    std::shared_ptr<Operand> foldConstantExpression(OpCode opcode, 
+                                                   std::shared_ptr<Operand> left, 
+                                                   std::shared_ptr<Operand> right);
+//--------------------增强常量折叠-----------------------   
+//--------------------增强常量传播----------------------- 
+    // 到达定义分析相关数据结构
+    struct ReachingDefinition {
+        int instructionIndex;   // 定义指令的索引
+        std::string varName;    // 被定义的变量名
+        std::shared_ptr<Operand> value; // 定义的值（如果是常量）
+        
+        bool operator==(const ReachingDefinition& other) const {
+            return instructionIndex == other.instructionIndex && 
+                   varName == other.varName;
+        }
+    };
+    
+    // 增强常量传播的辅助方法
+    std::map<int, std::set<ReachingDefinition>> computeReachingDefinitions();
+    bool isConstantDefinition(const std::shared_ptr<IRInstr>& instr, 
+                             const std::string& varName, 
+                             std::shared_ptr<Operand>& constantValue);
+    void enhancedConstantPropagation();    
+    bool canPropagateConstant(const std::set<ReachingDefinition>& reachingDefs,
+                             const std::string& varName,
+                             std::shared_ptr<Operand>& constantValue);
+//--------------------增强常量传播----------------------- 
+//--------------------增强死代码消除---------------------
+    // 活跃变量分析相关数据结构
+    struct LivenessInfo {
+        std::set<std::string> liveIn;   // 指令执行前的活跃变量
+        std::set<std::string> liveOut;  // 指令执行后的活跃变量
+        std::set<std::string> use;      // 指令使用的变量
+        std::set<std::string> def;      // 指令定义的变量
+    };
+    
+    // 增强死代码消除的辅助方法
+    std::vector<LivenessInfo> computeLivenessAnalysis();
+    bool hasEssentialSideEffects(const std::shared_ptr<IRInstr>& instr);
+    void enhancedDeadCodeElimination();
+    void eliminateUnusedFunctions();
+    std::vector<int> findSuccessors(int instructionIndex);
+    std::vector<int> findPredecessors(int instructionIndex);
+//--------------------增强死代码消除---------------------
+//--------------------公共子表达式消除---------------------
+    // 表达式表示结构
+    struct Expression {
+        OpCode opcode;                                    // 操作码
+        std::shared_ptr<Operand> left;                   // 左操作数（对一元运算为nullptr）
+        std::shared_ptr<Operand> right;                  // 右操作数
+        
+        // 计算表达式哈希值用于快速比较
+        size_t getHash() const;
+        
+        // 表达式相等比较
+        bool operator==(const Expression& other) const;
+        bool operator<(const Expression& other) const;
+    };
+    
+    // 可用表达式分析相关数据结构
+    struct AvailableExprInfo {
+        std::set<Expression> availIn;   // 指令执行前的可用表达式
+        std::set<Expression> availOut;  // 指令执行后的可用表达式
+        std::set<Expression> gen;       // 指令生成的表达式
+        std::set<Expression> kill;      // 指令杀死的表达式
+    };
+    
+    // 公共子表达式消除的辅助方法
+    std::vector<AvailableExprInfo> computeAvailableExpressionAnalysis();
+    void enhancedCommonSubexpressionElimination();
+    Expression* extractExpression(const std::shared_ptr<IRInstr>& instr);
+    std::set<Expression> getKilledExpressions(const std::shared_ptr<IRInstr>& instr);
+    bool canEliminateExpression(const Expression& expr, int instructionIndex, 
+                               const std::vector<AvailableExprInfo>& availInfo);
+    std::shared_ptr<Operand> findOrCreateTempForExpression(const Expression& expr);
+    
+    // 表达式到临时变量的映射
+    std::map<Expression, std::shared_ptr<Operand>> expressionToTemp;
+//--------------------公共子表达式消除---------------------
+//--------------------增强控制流优化-----------------------
+    // 控制流分析相关数据结构
+    struct ControlFlowInfo {
+        std::map<std::string, int> labelToIndex;      // 标签名到指令索引的映射
+        std::map<int, std::set<int>> predecessors;    // 每个指令的前驱集合
+        std::map<int, std::set<int>> successors;      // 每个指令的后继集合
+        std::set<std::string> referencedLabels;      // 被引用的标签集合
+        std::set<int> reachableInstructions;         // 可达指令集合
+    };
+    
+    // 增强控制流优化的辅助方法
+    void enhancedControlFlowOptimization();
+    ControlFlowInfo analyzeControlFlow();
+    void optimizeJumpChains(ControlFlowInfo& cfInfo);
+    void simplifyBranches(ControlFlowInfo& cfInfo);
+    void eliminateDeadLabels(const ControlFlowInfo& cfInfo);
+    void eliminateUnreachableCode(const ControlFlowInfo& cfInfo);
+    std::string getJumpTarget(int instructionIndex);
+    bool isUnconditionalJump(int instructionIndex);
+    bool isConditionalJump(int instructionIndex);
+    void updateJumpTarget(int instructionIndex, const std::string& newTarget);
+//--------------------增强控制流优化-----------------------
+
     // 短路求值支持
     std::shared_ptr<Operand> generateShortCircuitAnd(BinaryExpr& expr);
     std::shared_ptr<Operand> generateShortCircuitOr(BinaryExpr& expr);
