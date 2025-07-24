@@ -509,7 +509,7 @@ void IRGenerator::constantPropagation() {
     // 从变量名到其常量值的映射（如果已知）
     std::unordered_map<std::string, std::shared_ptr<Operand>> constants;
     bool changed = true;
-    int maxIterations = 10; // 限制最大迭代次数
+    int maxIterations = 5; // 限制最大迭代次数
     int iteration = 0;
     
     // 重复直到没有更多变化
