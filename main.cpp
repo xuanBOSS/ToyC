@@ -13,6 +13,7 @@
 int main(int argc, char* argv[]) {
     // 检查是否有 -opt 参数
     bool enableOptimization = false;
+    //bool enableOptimization = true; // 默认启用优化
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-opt") {
@@ -82,14 +83,21 @@ int main(int argc, char* argv[]) {
         std::cerr << "Error: Semantic analysis failed." << std::endl;
         return 1;
     }
+
+    // IR生成配置
+    IRGenConfig irConfig;
+    if(enableOptimization) {
+        // 启用优化选项
+        irConfig.enableOptimizations = true;
+    }
     
     // IR生成
-    IRGenerator irGenerator;
+    IRGenerator irGenerator(irConfig);
     irGenerator.generate(ast);
     
     // 可选：打印IR用于调试（输出到stderr不影响标准输出）
     if (enablePrintIR) {
-        std::cerr << "Optimization enabled." << std::endl;
+        std::cerr << "IR生成完成，开始打印IR\n";
         IRPrinter::print(irGenerator.getInstructions(), std::cerr);
     }
     std::cerr << "IR生成完成\n";

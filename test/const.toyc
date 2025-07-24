@@ -1,0 +1,10 @@
+// const.toyc —— 常量传播和常量折叠混合的测试用例
+int main() {
+    int a = 10;
+    int b = 20;
+    int c = a + b;           // 常量传播：a=10, b=20 → c = 30
+    int d = c * 2 + 5 - 3;   // 常量折叠：c=30 → d = 30*2+5-3 = 62
+    int e = d - a;           // 常量传播：d=62, a=10 → e = 52
+
+    return e;                // return 52
+}
