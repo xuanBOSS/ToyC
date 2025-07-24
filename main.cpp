@@ -108,7 +108,7 @@ int main(int argc, char* argv[]) {
         // 启用优化选项
         config.optimizeStackLayout = true;
         //config.eliminateDeadStores = true;
-        //config.enablePeepholeOptimizations = true;
+        config.enablePeepholeOptimizations = true;
         //config.regAllocStrategy = RegisterAllocStrategy::GRAPH_COLOR; // 使用图着色算法
     }
     
