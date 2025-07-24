@@ -86,10 +86,10 @@ int main(int argc, char* argv[]) {
 
     // IR生成配置
     IRGenConfig irConfig;
-    /*if(enableOptimization) {
+    if(enableOptimization) {
         // 启用优化选项
         irConfig.enableOptimizations = true;
-    }*/
+    }
     
     // IR生成
     IRGenerator irGenerator(irConfig);
