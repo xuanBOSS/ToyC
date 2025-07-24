@@ -627,9 +627,9 @@ void IRGenerator::constantPropagation() {
         }
         
         // 如果我们做了更改，再次运行常量折叠
-        if (changed) {
+        /*if (changed) {
             constantFolding();
-        }
+        }*/
 
         if (iteration >= maxIterations)  break;
         
