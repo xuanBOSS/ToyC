@@ -509,23 +509,29 @@ void IRGenerator::constantPropagation() {
     // 从变量名到其常量值的映射（如果已知）
     std::unordered_map<std::string, std::shared_ptr<Operand>> constants;
     bool changed = true;
+    int maxIterations = 10; // 限制最大迭代次数
+    int iteration = 0;
     
     // 重复直到没有更多变化
     while (changed) {
         changed = false;
+        iteration++;
         
         // 遍历所有指令，查找常量赋值
         for (size_t i = 0; i < instructions.size(); ++i) {
             auto instr = instructions[i];
             
-            // 如果是从常量赋值，记录它
+            // 如果是赋值语句
             if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                // 如果源操作数是常量，记录它
                 if (assignInstr->source->type == OperandType::CONSTANT) {
                     if (assignInstr->target->type == OperandType::VARIABLE || 
                         assignInstr->target->type == OperandType::TEMP) {
                         constants[assignInstr->target->name] = assignInstr->source;
                     }
-                } else if (assignInstr->source->type == OperandType::VARIABLE || 
+                } 
+                // 如果源操作数是变量或临时变量，尝试替换为已知常量
+                else if (assignInstr->source->type == OperandType::VARIABLE || 
                           assignInstr->source->type == OperandType::TEMP) {
                     // 如果从另一个已知具有常量值的变量赋值，传播它
                     auto it = constants.find(assignInstr->source->name);
@@ -624,6 +630,9 @@ void IRGenerator::constantPropagation() {
         if (changed) {
             constantFolding();
         }
+
+        if (iteration >= maxIterations)  break;
+        
     }
 }
 
