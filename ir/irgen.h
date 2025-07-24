@@ -141,6 +141,12 @@ private:
     void constantPropagation();    // 常量传播
     void deadCodeElimination();    // 死代码删除
     void controlFlowOptimization();// 控制流优化
+
+    // 递归解析常量表达式，depth 避免循环引用
+    std::shared_ptr<Operand> resolveConstant(
+        const std::string& name,
+        std::unordered_map<std::string, std::shared_ptr<Operand>>& constants,
+        int depth = 0);
     
     // 短路求值支持
     std::shared_ptr<Operand> generateShortCircuitAnd(BinaryExpr& expr);

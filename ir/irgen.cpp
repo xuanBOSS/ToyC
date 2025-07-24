@@ -534,10 +534,11 @@ void IRGenerator::constantPropagation() {
                 else if (assignInstr->source->type == OperandType::VARIABLE || 
                           assignInstr->source->type == OperandType::TEMP) {
                     // 如果从另一个已知具有常量值的变量赋值，传播它
-                    auto it = constants.find(assignInstr->source->name);
-                    if (it != constants.end()) {
+                    //auto it = constants.find(assignInstr->source->name);
+                    auto resolved = resolveConstant(assignInstr->source->name, constants);
+                    if (resolved) {
                         // 替换为直接从常量赋值
-                        assignInstr->source = it->second;
+                        assignInstr->source = resolved;
                         changed = true;
                     }
                 }
@@ -552,9 +553,10 @@ void IRGenerator::constantPropagation() {
                 // 尝试替换左操作数
                 if (binOp->left->type == OperandType::VARIABLE || 
                     binOp->left->type == OperandType::TEMP) {
-                    auto it = constants.find(binOp->left->name);
-                    if (it != constants.end()) {
-                        binOp->left = it->second;
+                    //auto it = constants.find(binOp->left->name);
+                    auto resolved = resolveConstant(binOp->left->name, constants);
+                    if (resolved) {
+                        binOp->left = resolved;
                         changed = true;
                     }
                 }
@@ -562,9 +564,10 @@ void IRGenerator::constantPropagation() {
                 // 尝试替换右操作数
                 if (binOp->right->type == OperandType::VARIABLE || 
                     binOp->right->type == OperandType::TEMP) {
-                    auto it = constants.find(binOp->right->name);
-                    if (it != constants.end()) {
-                        binOp->right = it->second;
+                    //auto it = constants.find(binOp->right->name);
+                    auto resolved = resolveConstant(binOp->right->name, constants);
+                    if (resolved) {
+                        binOp->right = resolved;
                         changed = true;
                     }
                 }
@@ -576,9 +579,10 @@ void IRGenerator::constantPropagation() {
             else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
                 if (unaryOp->operand->type == OperandType::VARIABLE || 
                     unaryOp->operand->type == OperandType::TEMP) {
-                    auto it = constants.find(unaryOp->operand->name);
-                    if (it != constants.end()) {
-                        unaryOp->operand = it->second;
+                    //auto it = constants.find(unaryOp->operand->name);
+                    auto resolved = resolveConstant(unaryOp->operand->name, constants);
+                    if (resolved) {
+                        unaryOp->operand = resolved;
                         changed = true;
                     }
                 }
@@ -596,9 +600,10 @@ void IRGenerator::constantPropagation() {
             else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
                 if (paramInstr->param->type == OperandType::VARIABLE || 
                     paramInstr->param->type == OperandType::TEMP) {
-                    auto it = constants.find(paramInstr->param->name);
-                    if (it != constants.end()) {
-                        paramInstr->param = it->second;
+                    //auto it = constants.find(paramInstr->param->name);
+                    auto resolved = resolveConstant(paramInstr->param->name, constants);
+                    if (resolved) {
+                        paramInstr->param = resolved;
                         changed = true;
                     }
                 }
@@ -607,9 +612,9 @@ void IRGenerator::constantPropagation() {
                 if (returnInstr->value && 
                    (returnInstr->value->type == OperandType::VARIABLE || 
                     returnInstr->value->type == OperandType::TEMP)) {
-                    auto it = constants.find(returnInstr->value->name);
-                    if (it != constants.end()) {
-                        returnInstr->value = it->second;
+                    auto resolved = resolveConstant(returnInstr->value->name, constants);
+                    if (resolved) {
+                        returnInstr->value = resolved;
                         changed = true;
                     }
                 }
@@ -617,9 +622,10 @@ void IRGenerator::constantPropagation() {
             else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
                 if (ifGotoInstr->condition->type == OperandType::VARIABLE || 
                     ifGotoInstr->condition->type == OperandType::TEMP) {
-                    auto it = constants.find(ifGotoInstr->condition->name);
-                    if (it != constants.end()) {
-                        ifGotoInstr->condition = it->second;
+                    //auto it = constants.find(ifGotoInstr->condition->name);
+                    auto resolved = resolveConstant(ifGotoInstr->condition->name, constants);
+                    if (resolved) {
+                        ifGotoInstr->condition = resolved;
                         changed = true;
                     }
                 }
@@ -627,14 +633,32 @@ void IRGenerator::constantPropagation() {
         }
         
         // 如果我们做了更改，再次运行常量折叠
-        /*if (changed) {
+        if (changed) {
             constantFolding();
-        }*/
+        }
 
         if (iteration >= maxIterations)  break;
         
     }
 }
+
+const int MAX_PROPAGATION_DEPTH = 20;
+std::shared_ptr<Operand> IRGenerator::resolveConstant(
+    const std::string& name,
+    std::unordered_map<std::string, std::shared_ptr<Operand>>& constants,
+    int depth
+) {
+    if (depth > MAX_PROPAGATION_DEPTH) return nullptr; // 防止无限传播
+    auto it = constants.find(name);
+    if (it == constants.end()) return nullptr;
+    auto operand = it->second;
+    if (operand->type == OperandType::CONSTANT) return operand;
+    if (operand->type == OperandType::VARIABLE || operand->type == OperandType::TEMP) {
+        return resolveConstant(operand->name, constants, depth + 1);
+    }
+    return nullptr;
+}
+
 
 
 /**
