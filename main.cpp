@@ -12,8 +12,8 @@
 
 int main(int argc, char* argv[]) {
     // 检查是否有 -opt 参数
-    //bool enableOptimization = false;
-    bool enableOptimization = true; // 默认启用优化
+    bool enableOptimization = false;
+    //bool enableOptimization = true; // 默认启用优化
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "-opt") {
