@@ -695,15 +695,6 @@ struct LatticeValue {
 
 using ConstMap = std::unordered_map<std::string, LatticeValue>;
 
-// --- BasicBlock ---
-struct BasicBlock {
-    int id;
-    std::vector<std::shared_ptr<IRInstr>> instructions;
-    std::vector<std::shared_ptr<BasicBlock>> successors;
-    std::vector<std::shared_ptr<BasicBlock>> predecessors;
-    std::string label; // 如果以标签开头则记录标签名（可选）
-};
-
 // ---------- 帮助函数（用于比较两个constMap是否语义等价） ----------
 static bool constMapsEqual(const ConstMap& a, const ConstMap& b) {
 
@@ -731,6 +722,114 @@ static bool constMapsEqual(const ConstMap& a, const ConstMap& b) {
     }
     return true;    // 所有键的对应值语义等价
 }
+
+// 在循环中对于回边的特殊处理
+using BlockID = int;
+std::vector<std::pair<BlockID, BlockID>> findBackEdges(
+    const std::unordered_map<BlockID, std::vector<BlockID>>& cfg) 
+{
+    std::vector<std::pair<BlockID, BlockID>> backEdges;     // 存储回边结果
+    std::unordered_set<BlockID> visited;                    // 记录已访问的块
+    std::vector<BlockID> stack;                             // DFS递归栈，用于检测回边
+
+    // DFS遍历函数（Lambda表达式）
+    std::function<void(BlockID)> dfs = [&](BlockID b) {
+        visited.insert(b);      // 标记当前块为已访问
+        stack.push_back(b);     // 将当前块压入DFS栈
+
+        // 遍历当前块的所有后继
+        for (auto succ : cfg.at(b)) {
+            // 情况1：后继块在DFS栈中 -> 发现回边
+            if (std::find(stack.begin(), stack.end(), succ) != stack.end()) {
+                // succ 在当前 DFS 栈中，说明是回边
+                backEdges.emplace_back(b, succ);
+            } 
+            // 情况2：后继块未访问 -> 递归处理
+            else if (!visited.count(succ)) {
+                dfs(succ);
+            }
+        }
+
+        stack.pop_back();   // 回溯：当前块处理完毕，弹出栈
+    };
+
+    // 对所有未访问的块启动DFS（处理不连通图）
+    for (auto& kv : cfg) {
+        if (!visited.count(kv.first)) {
+            dfs(kv.first);
+        }
+    }
+    return backEdges;
+}
+
+/**
+ * 获取循环体内定义的所有变量集合（循环定义变量分析）。
+ * 通过遍历从循环入口到回边的所有基本块，收集其中被赋值的变量名。
+ * 
+ * @param cfg 控制流图（BlockID -> 后继块列表）
+ * @param fromBlk 回边的起始块（循环体出口）
+ * @param toBlk 回边的目标块（循环体入口）
+ * @param blocks 基本块集合（BlockID -> Block结构体）
+ * @return 包含循环体内所有被赋值变量名的集合
+ */
+std::unordered_set<std::string> IRGenerator::getLoopDefs(
+    const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
+    BlockID fromBlk, BlockID toBlk,
+    const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
+{
+    std::unordered_set<BlockID> visited;    // 记录已访问的基本块
+    std::unordered_set<std::string> defs;   // 存储发现的变量定义
+    std::vector<BlockID> stack = {toBlk};   // 初始化DFS栈（从循环入口开始）
+
+    while (!stack.empty()) {
+        BlockID blk = stack.back();
+        stack.pop_back();
+
+        // 跳过已处理块
+        if (visited.count(blk)) continue;
+        visited.insert(blk);
+
+        // 遍历当前块的所有指令，收集赋值语句的目标变量
+        for (auto& inst : blocks.at(blk).instructions) {
+            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(inst)) {
+                defs.insert(assignInstr->target->name); // 记录被赋值的变量
+            }
+        }
+
+        // 处理后继块（深度优先遍历）
+        for (auto succ : cfg.at(blk)) {
+            // 关键逻辑：跳过直接回到循环入口的回边（避免无限循环）
+            if (succ != fromBlk) { // 避免直接走回边出口
+                stack.push_back(succ);
+            }
+        }
+    }
+    return defs;
+}
+
+/**
+ * 清除指定基本块在循环中定义的变量的常量状态，将其标记为未知（Unknown）。
+ * 用于处理循环体中对变量的重新定义，确保数据流分析的保守性。
+ * 
+ * @param inMap 当前块的输入常量映射表（将被修改）
+ * @param loopDefs 预计算的各循环块中定义的变量集合（BlockID -> 变量名集合）
+ * @param block 当前处理的基本块ID
+ */
+void clearLoopDefs(ConstMap& inMap, 
+    const std::unordered_map<BlockID, std::unordered_set<std::string>>& loopDefs,
+    BlockID block) 
+{
+    // 查找当前块是否属于某个循环定义域
+    auto it = loopDefs.find(block);
+    if (it != loopDefs.end()) {
+        // 遍历该循环块中所有被定义的变量
+        for (auto& var : it->second) {
+            // 强制将变量状态设为未知（覆盖可能的常量传播结果）
+            inMap[var] = {LatticeKind::Unknown, 0}; 
+        }
+    }
+}
+
 
 // meet (合并) 两个 ConstMap：对每个变量，如果两个都是同一常量，则保留，否则 Unknown/Top 规则
 static ConstMap meetMaps(const ConstMap& A, const ConstMap& B) {
@@ -1034,10 +1133,41 @@ void IRGenerator::constantPropagationCFG() {
     int n = (int)blocks.size();
     if (n == 0) return;
 
-    // 2. 初始化 in/out map
+    // 生成 CFG 映射：BlockID -> 后继列表
+    std::unordered_map<int, std::vector<int>> cfg;
+    for (auto& b : blocks) {
+        std::vector<int> succIds;
+        for (auto& s : b->successors) {
+            succIds.push_back(s->id);
+        }
+        cfg[b->id] = std::move(succIds);
+    }
+
+    // 2. 找回边
+    auto backEdges = findBackEdges(cfg);
+
+    // 3. 针对回边，找循环体内所有定义变量集合
+    //    这里需要一个 BlockID -> BasicBlock 映射方便访问
+    std::unordered_map<int, IRGenerator::BasicBlock> blocksMap;
+    for (auto& b : blocks) blocksMap[b->id] = *b;
+
+    // 循环入口块ID -> 循环内所有定义变量集合
+    std::unordered_map<int, std::unordered_set<std::string>> loopDefs;
+    for (auto& edge : backEdges) {
+        int fromBlk = edge.first;
+        int toBlk = edge.second;
+
+        auto defs = getLoopDefs(cfg, fromBlk, toBlk, blocksMap);
+
+        // 合并 defs 到 loopDefs，key用循环入口块ID（toBlk）
+        auto& defSet = loopDefs[toBlk];
+        defSet.insert(defs.begin(), defs.end());
+    }
+
+    // 4. 初始化 in/out map
     std::vector<ConstMap> inMap(n), outMap(n);
 
-    // 3. worklist（初始把入口块放入）
+    // 5. worklist（初始把入口块放入）
     std::queue<int> q;
     // 假定 blocks[0] 是入口（如果函数有多入口或特殊结构需修改）
     q.push(0);
@@ -1046,6 +1176,7 @@ void IRGenerator::constantPropagationCFG() {
         int bid = q.front(); q.pop();
         auto blk = blocks[bid];
 
+        // 计算 inMap[bid]
         // in[bid] = meet(out[pred]) for all predecessors
         if (blk->predecessors.empty()) {
             // entry block: in is empty(Unknown)
@@ -1064,6 +1195,10 @@ void IRGenerator::constantPropagationCFG() {
             inMap[bid] = accum;
         }
 
+        // **关键点**：清除循环定义变量的常量状态
+        clearLoopDefs(inMap[bid], loopDefs, bid);
+
+        // 计算 outMap[bid]
         // out = transfer(in, block.instructions)
         ConstMap outEnv = inMap[bid];
         for (auto& instr : blk->instructions) {
@@ -1077,7 +1212,7 @@ void IRGenerator::constantPropagationCFG() {
         }
     }
 
-    // 4. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
+    // 6. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
     for (int bid = 0; bid < n; ++bid) {
         ConstMap env = inMap[bid];
         auto blk = blocks[bid];
@@ -1136,7 +1271,7 @@ void IRGenerator::constantPropagationCFG() {
         }
     }
 
-    // 5. 再执行常量折叠（已有的函数）
+    // 7. 再执行常量折叠（已有的函数）
     constantFolding();
 }
 

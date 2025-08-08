@@ -13,6 +13,8 @@
 #include <queue>
 #include <unordered_set>
 
+using BlockID = int;
+
 // IR生成异常类
 class IRGenError : public std::runtime_error {
 public:
@@ -175,6 +177,12 @@ private:
     std::shared_ptr<Operand> makeConstantOperand(int v);
     // 构建基本快
     std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();
+    // 获取循环体内定义的所有变量集合（循环定义变量分析）
+    std::unordered_set<std::string> getLoopDefs(
+        const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
+        BlockID fromBlk, BlockID toBlk,
+        const std::unordered_map<BlockID, BasicBlock>& blocks
+    );
     // 构建CFG
     void buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks);
     
