@@ -10,6 +10,8 @@
 #include <map>
 #include <stack>
 #include <functional>
+#include <queue>
+#include <unordered_set>
 
 // IR生成异常类
 class IRGenError : public std::runtime_error {
@@ -138,7 +140,8 @@ private:
     
     // 优化相关方法
     void constantFolding();        // 常量折叠
-    void constantPropagation();    // 常量传播
+    //void constantPropagation();    // 常量传播
+    void constantPropagationCFG();   // 常量传播
     void deadCodeElimination();    // 死代码删除
     void controlFlowOptimization();// 控制流优化
 
@@ -146,6 +149,7 @@ private:
     std::shared_ptr<Operand> resolveConstant(
         const std::string& name,
         std::unordered_map<std::string, std::shared_ptr<Operand>>& constants,
+        std::unordered_set<std::string>& visited,
         int depth = 0);
     
     // 短路求值支持
@@ -153,21 +157,35 @@ private:
     std::shared_ptr<Operand> generateShortCircuitOr(BinaryExpr& expr);
     
     // 控制流分析
-    struct BasicBlock {
+    /*struct BasicBlock {
         std::string label;
         std::vector<int> instructionIndices;  // 指令索引
         std::vector<std::string> successors;  // 后继基本块
         std::vector<std::string> predecessors;// 前驱基本块
+    };*/
+    struct BasicBlock {
+        int id;
+        std::vector<std::shared_ptr<IRInstr>> instructions;
+        std::vector<std::shared_ptr<BasicBlock>> successors;
+        std::vector<std::shared_ptr<BasicBlock>> predecessors;
+        std::string label; // 如果以标签开头则记录标签名（可选）
     };
+
+    // 生成常量操作数
+    std::shared_ptr<Operand> makeConstantOperand(int v);
+    // 构建基本快
+    std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();
+    // 构建CFG
+    void buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks);
     
     // 构建控制流图
-    std::map<std::string, BasicBlock> buildControlFlowGraph();
+    //std::map<std::string, BasicBlock> buildControlFlowGraph();
     
     // 检查指令是否是控制流指令
-    bool isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr) const;
+    //bool isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr) const;
     
     // 获取控制流指令的目标标签
-    std::vector<std::string> getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const;
+    //std::vector<std::string> getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const;
 
     // 辅助函数，递归判断一个语句是否所有路径都 return
     bool allPathsReturn(const std::shared_ptr<Stmt>& stmt);
