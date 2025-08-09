@@ -412,9 +412,9 @@ void IRGenerator::dumpIR(const std::string& filename) const {
 void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
-    constantPropagation();    // 在代码中传播常量值
+    constantPropagationCFG();    // 在代码中传播常量值
     deadCodeElimination();    // 删除无效果的代码
-    controlFlowOptimization(); // 优化控制流（跳转、分支等）
+    //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
 /**
@@ -505,33 +505,41 @@ void IRGenerator::constantFolding() {
  * 跟踪被赋予常量值的变量，并用常量替换这些变量的使用。
  * 这使得进一步的优化机会，如常量折叠成为可能。
  */
-void IRGenerator::constantPropagation() {
+/*void IRGenerator::constantPropagation() {
     // 从变量名到其常量值的映射（如果已知）
     std::unordered_map<std::string, std::shared_ptr<Operand>> constants;
     bool changed = true;
+    int maxIterations = 2; // 限制最大迭代次数
+    int iteration = 0;
     
     // 重复直到没有更多变化
     while (changed) {
         changed = false;
+        iteration++;
         
         // 遍历所有指令，查找常量赋值
         for (size_t i = 0; i < instructions.size(); ++i) {
             auto instr = instructions[i];
             
-            // 如果是从常量赋值，记录它
+            // 如果是赋值语句
             if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                // 如果源操作数是常量，记录它
                 if (assignInstr->source->type == OperandType::CONSTANT) {
                     if (assignInstr->target->type == OperandType::VARIABLE || 
                         assignInstr->target->type == OperandType::TEMP) {
                         constants[assignInstr->target->name] = assignInstr->source;
                     }
-                } else if (assignInstr->source->type == OperandType::VARIABLE || 
+                } 
+                // 如果源操作数是变量或临时变量，尝试替换为已知常量
+                else if (assignInstr->source->type == OperandType::VARIABLE || 
                           assignInstr->source->type == OperandType::TEMP) {
                     // 如果从另一个已知具有常量值的变量赋值，传播它
-                    auto it = constants.find(assignInstr->source->name);
-                    if (it != constants.end()) {
+                    //auto it = constants.find(assignInstr->source->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(assignInstr->source->name, constants, visited);
+                    if (resolved) {
                         // 替换为直接从常量赋值
-                        assignInstr->source = it->second;
+                        assignInstr->source = resolved;
                         changed = true;
                     }
                 }
@@ -546,9 +554,11 @@ void IRGenerator::constantPropagation() {
                 // 尝试替换左操作数
                 if (binOp->left->type == OperandType::VARIABLE || 
                     binOp->left->type == OperandType::TEMP) {
-                    auto it = constants.find(binOp->left->name);
-                    if (it != constants.end()) {
-                        binOp->left = it->second;
+                    //auto it = constants.find(binOp->left->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(binOp->left->name, constants, visited);
+                    if (resolved) {
+                        binOp->left = resolved;
                         changed = true;
                     }
                 }
@@ -556,9 +566,11 @@ void IRGenerator::constantPropagation() {
                 // 尝试替换右操作数
                 if (binOp->right->type == OperandType::VARIABLE || 
                     binOp->right->type == OperandType::TEMP) {
-                    auto it = constants.find(binOp->right->name);
-                    if (it != constants.end()) {
-                        binOp->right = it->second;
+                    //auto it = constants.find(binOp->right->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(binOp->right->name, constants, visited);
+                    if (resolved) {
+                        binOp->right = resolved;
                         changed = true;
                     }
                 }
@@ -570,9 +582,11 @@ void IRGenerator::constantPropagation() {
             else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
                 if (unaryOp->operand->type == OperandType::VARIABLE || 
                     unaryOp->operand->type == OperandType::TEMP) {
-                    auto it = constants.find(unaryOp->operand->name);
-                    if (it != constants.end()) {
-                        unaryOp->operand = it->second;
+                    //auto it = constants.find(unaryOp->operand->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(unaryOp->operand->name, constants, visited);
+                    if (resolved) {
+                        unaryOp->operand = resolved;
                         changed = true;
                     }
                 }
@@ -590,9 +604,11 @@ void IRGenerator::constantPropagation() {
             else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
                 if (paramInstr->param->type == OperandType::VARIABLE || 
                     paramInstr->param->type == OperandType::TEMP) {
-                    auto it = constants.find(paramInstr->param->name);
-                    if (it != constants.end()) {
-                        paramInstr->param = it->second;
+                    //auto it = constants.find(paramInstr->param->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(paramInstr->param->name, constants, visited);
+                    if (resolved) {
+                        paramInstr->param = resolved;
                         changed = true;
                     }
                 }
@@ -601,9 +617,10 @@ void IRGenerator::constantPropagation() {
                 if (returnInstr->value && 
                    (returnInstr->value->type == OperandType::VARIABLE || 
                     returnInstr->value->type == OperandType::TEMP)) {
-                    auto it = constants.find(returnInstr->value->name);
-                    if (it != constants.end()) {
-                        returnInstr->value = it->second;
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(returnInstr->value->name, constants, visited);
+                    if (resolved) {
+                        returnInstr->value = resolved;
                         changed = true;
                     }
                 }
@@ -611,9 +628,11 @@ void IRGenerator::constantPropagation() {
             else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
                 if (ifGotoInstr->condition->type == OperandType::VARIABLE || 
                     ifGotoInstr->condition->type == OperandType::TEMP) {
-                    auto it = constants.find(ifGotoInstr->condition->name);
-                    if (it != constants.end()) {
-                        ifGotoInstr->condition = it->second;
+                    //auto it = constants.find(ifGotoInstr->condition->name);
+                    std::unordered_set<std::string> visited;
+                    auto resolved = resolveConstant(ifGotoInstr->condition->name, constants, visited);
+                    if (resolved) {
+                        ifGotoInstr->condition = resolved;
                         changed = true;
                     }
                 }
@@ -624,7 +643,636 @@ void IRGenerator::constantPropagation() {
         if (changed) {
             constantFolding();
         }
+
+        if (iteration >= maxIterations)  break;
+        
     }
+}
+
+const int MAX_PROPAGATION_DEPTH = 20;
+std::shared_ptr<Operand> IRGenerator::resolveConstant(
+    const std::string& name,
+    std::unordered_map<std::string, std::shared_ptr<Operand>>& constants,
+    std::unordered_set<std::string>& visited,
+    int depth
+) {
+    // 防止进入无限循环
+    if (depth > MAX_PROPAGATION_DEPTH) return nullptr; // 深度检测
+    if (visited.count(name)) return nullptr;           // 检测到环，直接返回
+    visited.insert(name);
+
+    // 寻找依赖的变量
+    auto it = constants.find(name);
+    if (it == constants.end()) return nullptr;
+
+    auto operand = it->second;
+    if (operand->type == OperandType::CONSTANT) return operand;
+    if (operand->type == OperandType::VARIABLE || operand->type == OperandType::TEMP) {
+        return resolveConstant(operand->name, constants, visited, depth + 1);
+    }
+    return nullptr;
+}*/
+
+/*
+*   常量传播优化
+*
+*   基于基本块 + 控制流图（CFG）+ 数据流分析 的实现
+*/
+
+// --- Lattice / ConstMap ---
+enum class LatticeKind { Unknown, Constant, Top };  // 三态：未知 / 常量 / 冲突
+
+struct LatticeValue {
+    LatticeKind kind = LatticeKind::Unknown;
+    int constantValue = 0;                                  // 仅当 kind == LatticeKind::Constant时有效，表示该值的​​具体常量数值​​。
+    bool operator==(const LatticeValue& o) const {                          // ==运算符重载
+        if (kind != o.kind) return false;
+        if (kind == LatticeKind::Constant) return constantValue == o.constantValue;
+        return true;
+    }
+    bool operator!=(const LatticeValue& o) const { return !(*this == o); }  // != 运算符重载
+};
+
+using ConstMap = std::unordered_map<std::string, LatticeValue>;
+
+// ---------- 帮助函数（用于比较两个constMap是否语义等价） ----------
+static bool constMapsEqual(const ConstMap& a, const ConstMap& b) {
+
+    // 将缺失的键视为Unknown状态
+    if (a.size() == b.size()) {
+        for (auto& [k, v] : a) {
+            auto it = b.find(k);
+            if (it == b.end()) return false;        // 键不一致直接返回false
+            if (v != it->second) return false;      // 值不一致直接返回false
+        }
+        return true;    // 所有键值对完全匹配
+    }
+
+    // 大小不同时：仍需检查键的并集
+    std::unordered_set<std::string> keys;   // 存储所有键的集合
+    for (auto& [k,_] : a) keys.insert(k);   // 收集a的键
+    for (auto& [k,_] : b) keys.insert(k);   // 收集b的键
+    for (auto& k : keys) {
+        auto ita = a.find(k);
+        auto itb = b.find(k);
+        // 若键不存在则使用默认LatticeValue(即Unknown)
+        LatticeValue va = (ita == a.end() ? LatticeValue{} : ita->second);
+        LatticeValue vb = (itb == b.end() ? LatticeValue{} : itb->second);
+        if (va != vb) return false;     // 存在不匹配的值
+    }
+    return true;    // 所有键的对应值语义等价
+}
+
+// 在循环中对于回边的特殊处理
+using BlockID = int;
+std::vector<std::pair<BlockID, BlockID>> findBackEdges(
+    const std::unordered_map<BlockID, std::vector<BlockID>>& cfg) 
+{
+    std::vector<std::pair<BlockID, BlockID>> backEdges;     // 存储回边结果
+    std::unordered_set<BlockID> visited;                    // 记录已访问的块
+    std::vector<BlockID> stack;                             // DFS递归栈，用于检测回边
+
+    // DFS遍历函数（Lambda表达式）
+    std::function<void(BlockID)> dfs = [&](BlockID b) {
+        visited.insert(b);      // 标记当前块为已访问
+        stack.push_back(b);     // 将当前块压入DFS栈
+
+        // 遍历当前块的所有后继
+        for (auto succ : cfg.at(b)) {
+            // 情况1：后继块在DFS栈中 -> 发现回边
+            if (std::find(stack.begin(), stack.end(), succ) != stack.end()) {
+                // succ 在当前 DFS 栈中，说明是回边
+                backEdges.emplace_back(b, succ);
+            } 
+            // 情况2：后继块未访问 -> 递归处理
+            else if (!visited.count(succ)) {
+                dfs(succ);
+            }
+        }
+
+        stack.pop_back();   // 回溯：当前块处理完毕，弹出栈
+    };
+
+    // 对所有未访问的块启动DFS（处理不连通图）
+    for (auto& kv : cfg) {
+        if (!visited.count(kv.first)) {
+            dfs(kv.first);
+        }
+    }
+    return backEdges;
+}
+
+/**
+ * 获取循环体内定义的所有变量集合（循环定义变量分析）。
+ * 通过遍历从循环入口到回边的所有基本块，收集其中被赋值的变量名。
+ * 
+ * @param cfg 控制流图（BlockID -> 后继块列表）
+ * @param fromBlk 回边的起始块（循环体出口）
+ * @param toBlk 回边的目标块（循环体入口）
+ * @param blocks 基本块集合（BlockID -> Block结构体）
+ * @return 包含循环体内所有被赋值变量名的集合
+ */
+std::unordered_set<std::string> IRGenerator::getLoopDefs(
+    const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
+    BlockID fromBlk, BlockID toBlk,
+    const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
+{
+    std::unordered_set<BlockID> visited;    // 记录已访问的基本块
+    std::unordered_set<std::string> defs;   // 存储发现的变量定义
+    std::vector<BlockID> stack = {toBlk};   // 初始化DFS栈（从循环入口开始）
+
+    while (!stack.empty()) {
+        BlockID blk = stack.back();
+        stack.pop_back();
+
+        // 跳过已处理块
+        if (visited.count(blk)) continue;
+        visited.insert(blk);
+
+        // 遍历当前块的所有指令，收集赋值语句的目标变量
+        for (auto& inst : blocks.at(blk).instructions) {
+            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(inst)) {
+                defs.insert(assignInstr->target->name); // 记录被赋值的变量
+            }
+        }
+
+        // 处理后继块（深度优先遍历）
+        for (auto succ : cfg.at(blk)) {
+            // 关键逻辑：跳过直接回到循环入口的回边（避免无限循环）
+            if (succ != fromBlk) { // 避免直接走回边出口
+                stack.push_back(succ);
+            }
+        }
+    }
+    return defs;
+}
+
+/**
+ * 清除指定基本块在循环中定义的变量的常量状态，将其标记为未知（Unknown）。
+ * 用于处理循环体中对变量的重新定义，确保数据流分析的保守性。
+ * 
+ * @param inMap 当前块的输入常量映射表（将被修改）
+ * @param loopDefs 预计算的各循环块中定义的变量集合（BlockID -> 变量名集合）
+ * @param block 当前处理的基本块ID
+ */
+void clearLoopDefs(ConstMap& inMap, 
+    const std::unordered_map<BlockID, std::unordered_set<std::string>>& loopDefs,
+    BlockID block) 
+{
+    // 查找当前块是否属于某个循环定义域
+    auto it = loopDefs.find(block);
+    if (it != loopDefs.end()) {
+        // 遍历该循环块中所有被定义的变量
+        for (auto& var : it->second) {
+            // 强制将变量状态设为未知（覆盖可能的常量传播结果）
+            inMap[var] = {LatticeKind::Unknown, 0}; 
+        }
+    }
+}
+
+
+// meet (合并) 两个 ConstMap：对每个变量，如果两个都是同一常量，则保留，否则 Unknown/Top 规则
+static ConstMap meetMaps(const ConstMap& A, const ConstMap& B) {
+    ConstMap R;     // 结果映射表
+
+    // 1. 收集所有键的并集
+    std::unordered_set<std::string> keys;
+    for (auto& p : A) keys.insert(p.first);
+    for (auto& p : B) keys.insert(p.first);
+
+    // 2. 对每个键进行合并操作
+    for (auto& k : keys) {
+        // 获取两个映射表中该键的值（不存在则视为Unknown）
+        auto ita = A.find(k);
+        auto itb = B.find(k);
+        LatticeValue va = (ita == A.end() ? LatticeValue{} : ita->second);
+        LatticeValue vb = (itb == B.end() ? LatticeValue{} : itb->second);
+
+        // 根据值的类型进行合并  
+        // 情况1：两者都是常量值     
+        if (va.kind == LatticeKind::Constant && vb.kind == LatticeKind::Constant) { 
+            if (va.constantValue == vb.constantValue) {
+                R[k] = va;
+            } else {
+                R[k] = LatticeValue{LatticeKind::Top, 0};
+            }
+        } 
+        // 情况2：一方是Unknown，直接取另一方的值（Unknown不影响结果）
+        else if (va.kind == LatticeKind::Unknown) {
+            R[k] = vb;
+        } 
+        else if (vb.kind == LatticeKind::Unknown) {
+            R[k] = va;
+        } 
+        // 情况3：其他情况（至少一方是Top，或类型组合不明确）
+        else {
+            if (va.kind == LatticeKind::Top || vb.kind == LatticeKind::Top) {
+                R[k] = LatticeValue{LatticeKind::Top, 0};
+            } else {
+                R[k] = LatticeValue{LatticeKind::Top, 0};
+            }
+        }
+    }
+    return R;
+}
+
+// 将 Operand 转换为 LatticeValue（使用当前 env）
+static LatticeValue valueOfOperand(const std::shared_ptr<Operand>& op, const ConstMap& env) {
+
+    // 1. 处理空指针情况：返回Unknown表示无效操作数
+    if (!op) return LatticeValue{LatticeKind::Unknown, 0};
+
+    // 2. 处理常量类型操作数
+    if (op->type == OperandType::CONSTANT) {
+        return LatticeValue{LatticeKind::Constant, op->value};
+    } 
+    // 3. 处理变量或临时变量
+    else if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
+        auto it = env.find(op->name);
+        if (it == env.end()) return LatticeValue{LatticeKind::Unknown, 0};
+        return it->second;
+    } 
+    // 4. 处理其他类型操作数(如函数调用、指针等)
+    else {
+        // 返回Top表示"可能任何值"(最不精确状态)
+        return LatticeValue{LatticeKind::Top, 0};
+    }
+}
+
+// 尝试计算二元运算的常量（如果两边常量且 op 可计算）
+static bool tryEvalBinaryOp(const std::shared_ptr<BinaryOpInstr>& binOp, int lval, int rval, int& out) {
+    
+    // 匹配对应的二元操作
+    switch (binOp->opcode) {
+        case OpCode::ADD: out = lval + rval; return true;
+        case OpCode::SUB: out = lval - rval; return true;
+        case OpCode::MUL: out = lval * rval; return true;
+        case OpCode::DIV:
+            if (rval == 0) return false;
+            out = lval / rval; return true;
+        case OpCode::AND: out = lval & rval; return true;
+        case OpCode::OR:  out = lval | rval; return true;
+        case OpCode::LT:  out = (lval < rval) ? 1 : 0; return true;
+        case OpCode::GT:  out = (lval > rval) ? 1 : 0; return true;
+        case OpCode::LE:  out = (lval <= rval) ? 1 : 0; return true;
+        case OpCode::GE:  out = (lval >= rval) ? 1 : 0; return true;
+        case OpCode::EQ:  out = (lval == rval) ? 1 : 0; return true;
+        case OpCode::NE:  out = (lval != rval) ? 1 : 0; return true;
+        default: return false;
+    }
+}
+
+// 生成常量操作数
+std::shared_ptr<Operand> IRGenerator::makeConstantOperand(int v) {
+    auto op = std::make_shared<Operand>(OperandType::CONSTANT, "const");    // 常量可以没有 name
+    op->value = v;
+    return op;
+}
+
+// ---------- 构建基本块 ----------
+std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlocks() {
+    std::vector<std::shared_ptr<BasicBlock>> blocks;    // 存储生成的基本块
+    const auto& instrs = this->instructions; 
+
+    // 首先扫描得到 label -> index 映射
+    std::unordered_map<std::string, int> labelToIndex;
+    for (int i = 0; i < (int)instrs.size(); ++i) {
+        // 如果是标签指令，记录其位置
+        if (auto lbl = std::dynamic_pointer_cast<LabelInstr>(instrs[i])) {
+            labelToIndex[lbl->label] = i;
+        }
+    }
+
+    // 标记 leader（基本块起点）
+    std::vector<char> isLeader(instrs.size(), 0);
+
+    // 规则1：第一条指令默认是Leader
+    if (!instrs.empty()) isLeader[0] = 1;
+
+    for (int i = 0; i < (int)instrs.size(); ++i) {
+        auto ins = instrs[i];
+
+        // 规则2：跳转指令的目标指令是Leader
+        if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(ins)) {
+
+            // 查找跳转目标标签对应的指令位置
+            auto it = labelToIndex.find(ifg->target->name);
+            if (it != labelToIndex.end()) isLeader[it->second] = 1;
+
+            // 规则3：跳转指令的下一条指令是Leader（fall-through情况）
+            if (i + 1 < (int)instrs.size()) isLeader[i + 1] = 1;
+        } 
+        // 规则4：无条件跳转指令处理
+        else if (auto g = std::dynamic_pointer_cast<GotoInstr>(ins)) {
+            auto it = labelToIndex.find(g->target->name);
+            if (it != labelToIndex.end()) isLeader[it->second] = 1;
+            if (i + 1 < (int)instrs.size()) isLeader[i + 1] = 1; // safe：即使不可达也当 leader
+        } 
+        // 规则5：返回指令的下一条是Leader
+        else if (auto ret = std::dynamic_pointer_cast<ReturnInstr>(ins)) {
+            if (i + 1 < (int)instrs.size()) isLeader[i + 1] = 1;
+        } 
+        // 规则6：标签指令自身是Leader（处理标签在代码中间的情况）
+        else if (std::dynamic_pointer_cast<LabelInstr>(ins)) {
+            isLeader[i] = 1; // label 自身是 leader（如果 label 在中间）
+        }
+    }
+
+    // 收集所有Leader的索引
+    std::vector<int> leadersIdx;
+    for (int i = 0; i < (int)isLeader.size(); ++i) if (isLeader[i]) leadersIdx.push_back(i);
+    
+    // 特殊情况处理：如果没有Leader但指令不为空，默认第一条为Leader
+    if (leadersIdx.empty() && !instrs.empty()) leadersIdx.push_back(0);
+
+    // 根据Leader划分基本块
+    for (int bi = 0; bi < (int)leadersIdx.size(); ++bi) {
+        int start = leadersIdx[bi];     // 当前基本块起始指令索引
+        // 计算结束指令索引：下一个Leader前一条，或者指令列表末尾
+        int end = (bi + 1 < (int)leadersIdx.size()) ? (leadersIdx[bi + 1] - 1) : ((int)instrs.size() - 1);
+
+        // 创建新基本块
+        auto block = std::make_shared<BasicBlock>();
+        block->id = (int)blocks.size();
+
+        // 将[start..end]范围内的指令加入基本块
+        for (int k = start; k <= end; ++k) block->instructions.push_back(instrs[k]);
+
+        // 如果基本块的第一条指令是标签，记录标签名
+        if (!block->instructions.empty()) {
+            if (auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
+                block->label = lbl->label;
+            }
+        }
+
+        blocks.push_back(block);    // 将基本块加入结果列表
+    }
+
+    return blocks;
+}
+
+// ---------- 构建 CFG（连接基本块） ----------
+void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
+    if (blocks.empty()) return;
+    // 建立 label -> block 映射（块以 label 开头）
+    std::unordered_map<std::string, std::shared_ptr<BasicBlock>> labelToBlock;
+    for (auto& b : blocks) {
+        if (!b->label.empty()) labelToBlock[b->label] = b;
+    }
+
+    // 对每个 block，根据尾指令确定 successors
+    for (int i = 0; i < (int)blocks.size(); ++i) {
+        auto& b = blocks[i];
+        if (b->instructions.empty()) continue;
+        auto last = b->instructions.back();
+
+        if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(last)) {
+            // 条件分支：两个后继（目标标签 + fall-through）
+            auto it = labelToBlock.find(ifg->target->name);
+            if (it != labelToBlock.end()) {
+                b->successors.push_back(it->second);
+            }
+            // fall-through 到下一个块（如果存在）
+            if (i + 1 < (int)blocks.size()) b->successors.push_back(blocks[i + 1]);
+        } else if (auto g = std::dynamic_pointer_cast<GotoInstr>(last)) {
+            // 无条件跳转：只有跳转目标
+            auto it = labelToBlock.find(g->target->name);
+            if (it != labelToBlock.end()) b->successors.push_back(it->second);
+        } else if (std::dynamic_pointer_cast<ReturnInstr>(last)) {
+            // return: 没有后继
+        } else {
+            // 默认 fall-through
+            if (i + 1 < (int)blocks.size()) b->successors.push_back(blocks[i + 1]);
+        }
+    }
+
+    // 填充 predecessors
+    for (auto& b : blocks) {
+        for (auto& s : b->successors) {
+            s->predecessors.push_back(b);
+        }
+    }
+}
+
+// ---------- transfer function：基于当前 env 更新 env（顺序应用 block 内指令） ----------
+void applyTransferToEnv(ConstMap& env, const std::shared_ptr<IRInstr>& instr) {
+
+    // AssignInstr
+    if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        // 如果 source 是常量，直接写常量
+        if (assignInstr->source->type == OperandType::CONSTANT) {
+            env[assignInstr->target->name] = LatticeValue{LatticeKind::Constant, assignInstr->source->value};
+        } else if (assignInstr->source->type == OperandType::VARIABLE || assignInstr->source->type == OperandType::TEMP) {
+            // 如果 source 在 env 中是常量，赋值传播，否则变 Top
+            auto it = env.find(assignInstr->source->name);
+            if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                env[assignInstr->target->name] = it->second;
+            } else if (it != env.end() && it->second.kind == LatticeKind::Unknown) {
+                env[assignInstr->target->name] = LatticeValue{LatticeKind::Unknown, 0};
+            } else {
+                env[assignInstr->target->name] = LatticeValue{LatticeKind::Top, 0};
+            }
+        } else {
+            // 来源复杂（如 memory），置 Top
+            env[assignInstr->target->name] = LatticeValue{LatticeKind::Top, 0};
+        }
+    } 
+    // BinaryOpInstr
+    else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+        // 尝试如果左右都是常量，则计算结果
+        auto L = valueOfOperand(binOp->left, env);
+        auto R = valueOfOperand(binOp->right, env);
+        if (L.kind == LatticeKind::Constant && R.kind == LatticeKind::Constant) {
+            int outv;
+            if (tryEvalBinaryOp(binOp, L.constantValue, R.constantValue, outv)) {
+                env[binOp->result->name] = LatticeValue{LatticeKind::Constant, outv};
+            } else {
+                env[binOp->result->name] = LatticeValue{LatticeKind::Top, 0};
+            }
+        } else if (L.kind == LatticeKind::Unknown || R.kind == LatticeKind::Unknown) {
+            env[binOp->result->name] = LatticeValue{LatticeKind::Unknown, 0};
+        } else {
+            env[binOp->result->name] = LatticeValue{LatticeKind::Top, 0};
+        }
+    } 
+    // UnaryOpInstr
+    else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+        auto V = valueOfOperand(unaryOp->operand, env);
+        if (V.kind == LatticeKind::Constant) {
+
+            // 按照对应的操作符执行操作
+            int outv = V.constantValue;
+            if(unaryOp->opcode == OpCode::NEG) outv = -outv;
+            else if(unaryOp->opcode == OpCode::NOT) outv = !outv;
+
+            env[unaryOp->result->name] = LatticeValue{LatticeKind::Constant, outv};
+        } else if (V.kind == LatticeKind::Unknown) {
+            env[unaryOp->result->name] = LatticeValue{LatticeKind::Unknown, 0};
+        } else {
+            env[unaryOp->result->name] = LatticeValue{LatticeKind::Top, 0};
+        }
+    } 
+    // CallInstr
+    else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+        // 保守处理：函数调用可能有副作用，result 置 Top；如果你能保证调用不影响其他变量，可优化
+        if (callInstr->result) env[callInstr->result->name] = LatticeValue{LatticeKind::Top, 0};
+    } 
+    // 其他指令
+    else {
+        // GotoInstr / IfGotoInstr / ParamInstr / ReturnInstr / LabelInstr / FunctionBeginInstr / FunctionEndInstr
+        // 不会产生新的定义，因此 env 保持不变
+    }
+}
+
+// ---------- 主分析与替换（CFG 版常量传播） ----------
+void IRGenerator::constantPropagationCFG() {
+    // 1. 构建 basic blocks 与 CFG
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    int n = (int)blocks.size();
+    if (n == 0) return;
+
+    // 生成 CFG 映射：BlockID -> 后继列表
+    std::unordered_map<int, std::vector<int>> cfg;
+    for (auto& b : blocks) {
+        std::vector<int> succIds;
+        for (auto& s : b->successors) {
+            succIds.push_back(s->id);
+        }
+        cfg[b->id] = std::move(succIds);
+    }
+
+    // 2. 找回边
+    auto backEdges = findBackEdges(cfg);
+
+    // 3. 针对回边，找循环体内所有定义变量集合
+    //    这里需要一个 BlockID -> BasicBlock 映射方便访问
+    std::unordered_map<int, IRGenerator::BasicBlock> blocksMap;
+    for (auto& b : blocks) blocksMap[b->id] = *b;
+
+    // 循环入口块ID -> 循环内所有定义变量集合
+    std::unordered_map<int, std::unordered_set<std::string>> loopDefs;
+    for (auto& edge : backEdges) {
+        int fromBlk = edge.first;
+        int toBlk = edge.second;
+
+        auto defs = getLoopDefs(cfg, fromBlk, toBlk, blocksMap);
+
+        // 合并 defs 到 loopDefs，key用循环入口块ID（toBlk）
+        auto& defSet = loopDefs[toBlk];
+        defSet.insert(defs.begin(), defs.end());
+    }
+
+    // 4. 初始化 in/out map
+    std::vector<ConstMap> inMap(n), outMap(n);
+
+    // 5. worklist（初始把入口块放入）
+    std::queue<int> q;
+    // 假定 blocks[0] 是入口（如果函数有多入口或特殊结构需修改）
+    q.push(0);
+
+    while (!q.empty()) {
+        int bid = q.front(); q.pop();
+        auto blk = blocks[bid];
+
+        // 计算 inMap[bid]
+        // in[bid] = meet(out[pred]) for all predecessors
+        if (blk->predecessors.empty()) {
+            // entry block: in is empty(Unknown)
+            inMap[bid] = ConstMap{};
+        } else {
+            ConstMap accum;
+            bool first = true;
+            for (auto& p : blk->predecessors) {
+                if (first) {
+                    accum = outMap[p->id];
+                    first = false;
+                } else {
+                    accum = meetMaps(accum, outMap[p->id]);
+                }
+            }
+            inMap[bid] = accum;
+        }
+
+        // **关键点**：清除循环定义变量的常量状态
+        clearLoopDefs(inMap[bid], loopDefs, bid);
+
+        // 计算 outMap[bid]
+        // out = transfer(in, block.instructions)
+        ConstMap outEnv = inMap[bid];
+        for (auto& instr : blk->instructions) {
+            applyTransferToEnv(outEnv, instr);
+        }
+
+        // 如果 out 改变，更新并把所有后继放入队列
+        if (!constMapsEqual(outEnv, outMap[bid])) {
+            outMap[bid] = outEnv;
+            for (auto& succ : blk->successors) q.push(succ->id);
+        }
+    }
+
+    // 6. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
+    for (int bid = 0; bid < n; ++bid) {
+        ConstMap env = inMap[bid];
+        auto blk = blocks[bid];
+        for (auto& instr : blk->instructions) {
+            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                if (assignInstr->source->type == OperandType::VARIABLE || assignInstr->source->type == OperandType::TEMP) {
+                    auto it = env.find(assignInstr->source->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        assignInstr->source = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (binOp->left->type == OperandType::VARIABLE || binOp->left->type == OperandType::TEMP) {
+                    auto it = env.find(binOp->left->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        binOp->left = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+                if (binOp->right->type == OperandType::VARIABLE || binOp->right->type == OperandType::TEMP) {
+                    auto it = env.find(binOp->right->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        binOp->right = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                if (unaryOp->operand->type == OperandType::VARIABLE || unaryOp->operand->type == OperandType::TEMP) {
+                    auto it = env.find(unaryOp->operand->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        unaryOp->operand = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            } else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
+                if (paramInstr->param->type == OperandType::VARIABLE || paramInstr->param->type == OperandType::TEMP) {
+                    auto it = env.find(paramInstr->param->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        paramInstr->param = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            } else if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
+                if (returnInstr->value && (returnInstr->value->type == OperandType::VARIABLE || returnInstr->value->type == OperandType::TEMP)) {
+                    auto it = env.find(returnInstr->value->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        returnInstr->value = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            } else if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+                if (ifg->condition->type == OperandType::VARIABLE || ifg->condition->type == OperandType::TEMP) {
+                    auto it = env.find(ifg->condition->name);
+                    if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                        ifg->condition = makeConstantOperand(it->second.constantValue);
+                    }
+                }
+            }
+            // 逐条指令应用 transfer，使 env 随 block 内顺序更新（保守，保持一致）
+            applyTransferToEnv(env, instr);
+        }
+    }
+
+    // 7. 再执行常量折叠（已有的函数）
+    constantFolding();
 }
 
 
@@ -695,7 +1343,7 @@ void IRGenerator::deadCodeElimination() {
  * 例如，消除冗余跳转，优化分支条件，
  * 简化控制流模式。
  */
-void IRGenerator::controlFlowOptimization() {
+/*void IRGenerator::controlFlowOptimization() {
     bool changed = true;
     
     while (changed) {
@@ -756,7 +1404,7 @@ void IRGenerator::controlFlowOptimization() {
             deadCodeElimination();
         }
     }
-}
+}*/
 
 /**
  * 检查指令是否是控制流指令。
@@ -766,11 +1414,11 @@ void IRGenerator::controlFlowOptimization() {
  * @param instr 要检查的指令
  * @return 如果指令是控制流指令，则为true
  */
-bool IRGenerator::isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr) const {
+/*bool IRGenerator::isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr) const {
     return std::dynamic_pointer_cast<GotoInstr>(instr) != nullptr ||
            std::dynamic_pointer_cast<IfGotoInstr>(instr) != nullptr ||
            std::dynamic_pointer_cast<ReturnInstr>(instr) != nullptr;
-}
+}*/
 
 /**
  * 获取控制流指令的目标标签。
@@ -778,7 +1426,7 @@ bool IRGenerator::isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr
  * @param instr 控制流指令
  * @return 目标标签名的向量
  */
-std::vector<std::string> IRGenerator::getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const {
+/*std::vector<std::string> IRGenerator::getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const {
     std::vector<std::string> targets;
     
     if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instr)) {
@@ -789,7 +1437,7 @@ std::vector<std::string> IRGenerator::getControlFlowTargets(const std::shared_pt
     }
     
     return targets;
-}
+}*/
 
 /**
  * 从IR指令构建控制流图。
@@ -800,7 +1448,7 @@ std::vector<std::string> IRGenerator::getControlFlowTargets(const std::shared_pt
  * 
  * @return 从标签名到基本块的映射
  */
-std::map<std::string, IRGenerator::BasicBlock> IRGenerator::buildControlFlowGraph() {
+/*std::map<std::string, IRGenerator::BasicBlock> IRGenerator::buildControlFlowGraph() {
     std::map<std::string, BasicBlock> blocks;
     
     // 寻找所有标签和控制流指令
@@ -905,7 +1553,7 @@ std::map<std::string, IRGenerator::BasicBlock> IRGenerator::buildControlFlowGrap
     }
     
     return blocks;
-}
+}*/
 
 //------------------------------------------------------------------------------
 // AST访问者方法（表达式节点）
