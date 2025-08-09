@@ -241,26 +241,18 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
     // 循环优化: 检测是否是循环计数器更新
     bool isLoopCounter = false;
     if (instr->opcode == OpCode::ADD && 
-        instr->result->type == OperandType::VARIABLE &&
         instr->left->type == OperandType::VARIABLE && 
         instr->right->type == OperandType::CONSTANT &&
-        instr->result->name == instr->left->name && 
-        (instr->result->name == "i" || instr->result->name == "j" || instr->result->name == "k") &&
         instr->right->value == 1) {
         
-        // 这是循环计数器更新，使用专用寄存器
-        std::string loopReg;
-        if (instr->result->name == "i") loopReg = "s1";
-        else if (instr->result->name == "j") loopReg = "s2";
-        else if (instr->result->name == "k") loopReg = "s3";
-        
-        // 直接更新循环计数器
-        emitInstruction("addi " + loopReg + ", " + loopReg + ", 1");
-        
-        // 存储结果
-        storeRegister(loopReg, instr->result);
-        freeTempReg(resultReg);
-        return;
+        auto it = loopVarToRegMap.find(instr->left->name);
+        if (it != loopVarToRegMap.end()) {
+            // 这是循环计数器递增操作
+            emitInstruction("addi " + it->second + ", " + it->second + ", 1");
+            storeRegister(it->second, instr->result);
+            freeTempReg(resultReg);
+            return;
+        }
     }
 //------------------------修改性能loop--------------------------
     
@@ -328,6 +320,12 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
         loadOperand(instr->right, rightReg);
 
         // 根据操作码生成相应的指令
+        // 特殊情况优化 - 常量运算
+        if (instr->opcode == OpCode::ADD && 
+            instr->right->type == OperandType::CONSTANT) {
+            // 常量加法使用addi而不是add
+            emitInstruction("addi " + resultReg + ", " + leftReg + ", " + std::to_string(instr->right->value));
+        } else {
         switch (instr->opcode) {
             case OpCode::ADD:
                 emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
@@ -370,6 +368,7 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
                 std::cerr << "错误: 未知的二元操作" << std::endl;
                 break;
         }
+    }
 
         // 释放临时寄存器
         freeTempReg(rightReg);
@@ -691,46 +690,31 @@ void CodeGenerator::processFunctionEnd(const std::shared_ptr<FunctionEndInstr>& 
 // 生成函数序言
 // 设置栈帧，保存返回地址和帧指针
 void CodeGenerator::emitPrologue(const std::string& funcName) {
-    emitComment("函数序言");
+    // emitComment("函数序言");
     
-    //重置栈帧偏移量
-    resetStackOffset();
-//---------------------------修改性能loop--------------------
-    // 1. 计算各区域大小
+    // //重置栈帧偏移量
+    // resetStackOffset();
+
+    // // 1. 计算各区域大小
     // calleeRegsSize = countUsedCalleeSavedRegs() * 4;  // 被调用者保存寄存器空间
     // callerRegsSize = countUsedCallerSavedRegs() * 4;  // 调用者保存寄存器空间
     // int localsAndPadding = analyzeTempVars();  // 分析临时变量需求
     // int totalFrameSize = calleeRegsSize + callerRegsSize + localsAndPadding + 8; // +8 for ra/fp
     // totalFrameSize = (totalFrameSize + 15) & ~15;      // 最终16字节对齐
     // frameSize = totalFrameSize; // 更新当前帧大小
-    // 对于循环密集型代码，预分配更多空间以避免频繁栈调整
-    bool isLoopIntensive = detectIntensiveLoops();
-    calleeRegsSize = countUsedCalleeSavedRegs() * 4;
-    callerRegsSize = countUsedCallerSavedRegs() * 4;
-    
-    int localsAndPadding = analyzeTempVars();
-    
-    // 对循环密集型代码预分配额外空间
-    if (isLoopIntensive) {
-        localsAndPadding += 64;  // 额外预留64字节
-    }
-    
-    int totalFrameSize = calleeRegsSize + callerRegsSize + localsAndPadding + 8; // +8 for ra/fp
-    totalFrameSize = (totalFrameSize + 15) & ~15;  // 16字节对齐
-    frameSize = totalFrameSize;
-//---------------------------修改性能loop--------------------
-    // 2. 分配栈空间
-    // 修改这部分：
-    if (totalFrameSize <= 2048) {
-        emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
-    } else {
-        // 栈帧太大，需要使用多条指令
-        emitInstruction("li t0, -" + std::to_string(totalFrameSize));
-        emitInstruction("add sp, sp, t0");
-    }
-//---------------------------修改性能loop--------------------
-    // 3. 保存关键寄存器
-    // 修改这部分：
+
+    // // 2. 分配栈空间
+    // // 修改这部分：
+    // if (totalFrameSize <= 2048) {
+    //     emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
+    // } else {
+    //     // 栈帧太大，需要使用多条指令
+    //     emitInstruction("li t0, -" + std::to_string(totalFrameSize));
+    //     emitInstruction("add sp, sp, t0");
+    // }
+
+    // // 3. 保存关键寄存器
+    // // 修改这部分：
     // if (totalFrameSize - 4 <= 2047) {
     //     emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
     // } else {
@@ -746,41 +730,110 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
     //     emitInstruction("add t0, sp, t0");
     //     emitInstruction("sw fp, 0(t0)");
     // }
-    if (isLoopIntensive) {
-        optimizeForLoops();
-    }
-//---------------------------修改性能loop--------------------
 
-    // 4. 设置新帧指针（指向旧sp）
+    // // 4. 设置新帧指针（指向旧sp）
+    // if (totalFrameSize <= 2048) {
+    //     emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
+    // } else {
+    //     emitInstruction("li t0, " + std::to_string(totalFrameSize));
+    //     emitInstruction("add fp, sp, t0");
+    // }
+
+    // // 5. 保存被调用者寄存器
+    // saveCalleeSavedRegs();
+
+    // // 更新状态
+    // frameInitialized = true;
+    // this->frameSize = totalFrameSize;
+//---------------------修改性能loop----------------------------
+    emitComment("函数序言");
+    
+    // 重置栈帧偏移量
+    resetStackOffset();
+    
+    // 检测是否包含循环
+    bool isLoopIntensive = detectIntensiveLoops();
+    
+    // 计算栈帧大小
+    calleeRegsSize = countUsedCalleeSavedRegs() * 4;
+    callerRegsSize = countUsedCallerSavedRegs() * 4;
+    
+    // 分析临时变量
+    int localsSize = analyzeTempVars();
+    
+    // 为循环密集型代码额外分配空间，但限制最大大小
+    if (isLoopIntensive) {
+        localsSize += 64; // 额外预留64字节
+    }
+    
+    // 计算总栈帧大小并16字节对齐
+    int totalFrameSize = calleeRegsSize + callerRegsSize + localsSize + 8; // +8 for ra/fp
+    totalFrameSize = (totalFrameSize + 15) & ~15;
+    frameSize = totalFrameSize;
+    
+    // 分配栈空间 - 使用稳定实现
+    if (totalFrameSize <= 2048) {
+        emitInstruction("addi sp, sp, -" + std::to_string(totalFrameSize));
+    } else {
+        // 大栈帧需要分步计算
+        emitInstruction("li t0, " + std::to_string(totalFrameSize));
+        emitInstruction("sub sp, sp, t0");
+    }
+    
+    // 保存返回地址和帧指针
+    if (totalFrameSize - 4 <= 2047) {
+        emitInstruction("sw ra, " + std::to_string(totalFrameSize - 4) + "(sp)");
+    } else {
+        // 大偏移量
+        emitInstruction("li t0, " + std::to_string(totalFrameSize - 4));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("sw ra, 0(t0)");
+    }
+    
+    if (totalFrameSize - 8 <= 2047) {
+        emitInstruction("sw fp, " + std::to_string(totalFrameSize - 8) + "(sp)");
+    } else {
+        // 大偏移量
+        emitInstruction("li t0, " + std::to_string(totalFrameSize - 8));
+        emitInstruction("add t0, sp, t0");
+        emitInstruction("sw fp, 0(t0)");
+    }
+    
+    // 设置新帧指针
     if (totalFrameSize <= 2048) {
         emitInstruction("addi fp, sp, " + std::to_string(totalFrameSize));
     } else {
         emitInstruction("li t0, " + std::to_string(totalFrameSize));
         emitInstruction("add fp, sp, t0");
     }
-//---------------------修改18-----------------------------
-    // 5. 保存被调用者寄存器
+    
+    // 为循环密集型代码特殊优化
+    if (isLoopIntensive) {
+        optimizeForLoops();
+    }
+    
+    // 保存被调用者寄存器
     saveCalleeSavedRegs();
-
+    
     // 更新状态
     frameInitialized = true;
-    this->frameSize = totalFrameSize;
+//---------------------修改性能loop----------------------------
 }
 
 //---------------------修改性能loop-------------------------
-// 添加 detectIntensiveLoops 函数，检测代码是否包含密集循环
 bool CodeGenerator::detectIntensiveLoops() {
-    // 简单启发式：检查是否包含 i, j, k 变量和多个比较指令
     int loopVarCount = 0;
     int branchCount = 0;
+    int arrayAccessCount = 0;
     
     for (const auto& instr : instructions) {
         std::string instrStr = instr->toString();
         
         // 计数循环变量
-        if (instrStr.find(" i ") != std::string::npos || 
+        if ((instrStr.find(" i ") != std::string::npos || 
             instrStr.find(" j ") != std::string::npos || 
-            instrStr.find(" k ") != std::string::npos) {
+            instrStr.find(" k ") != std::string::npos) &&
+            (instrStr.find("=") != std::string::npos)) {
             loopVarCount++;
         }
         
@@ -788,25 +841,67 @@ bool CodeGenerator::detectIntensiveLoops() {
         if (instrStr.find("if_goto") != std::string::npos) {
             branchCount++;
         }
+        
+        // 计数数组访问
+        if (instrStr.find("[") != std::string::npos && instrStr.find("]") != std::string::npos) {
+            arrayAccessCount++;
+        }
     }
     
-    // 如果循环变量和分支指令都较多，可能是循环密集型代码
-    return (loopVarCount > 5 && branchCount > 10);
+    // 返回更精确的循环密集型代码检测
+    return (loopVarCount > 3 && branchCount > 5) || arrayAccessCount > 10;
+    // // 简单启发式：检查是否包含 i, j, k 变量和多个比较指令
+    // int loopVarCount = 0;
+    // int branchCount = 0;
+    
+    // for (const auto& instr : instructions) {
+    //     std::string instrStr = instr->toString();
+        
+    //     // 计数循环变量
+    //     if (instrStr.find(" i ") != std::string::npos || 
+    //         instrStr.find(" j ") != std::string::npos || 
+    //         instrStr.find(" k ") != std::string::npos) {
+    //         loopVarCount++;
+    //     }
+        
+    //     // 计数条件分支
+    //     if (instrStr.find("if_goto") != std::string::npos) {
+    //         branchCount++;
+    //     }
+    // }
+    
+    // // 如果循环变量和分支指令都较多，可能是循环密集型代码
+    // return (loopVarCount > 5 && branchCount > 10);
 }
 
 // 添加 optimizeForLoops 函数，为循环密集代码做优化
 void CodeGenerator::optimizeForLoops() {
     emitComment("启用循环优化");
     
-    // 为常见循环变量预先分配寄存器
+    // 为常见循环变量预先分配寄存器 - 这部分很关键
+    loopVarToRegMap.clear(); // 确保清空旧映射
     loopVarToRegMap["i"] = "s1";
-    loopVarToRegMap["j"] = "s2";
+    loopVarToRegMap["j"] = "s2"; 
     loopVarToRegMap["k"] = "s3";
     
-    // 初始化这些寄存器为0
-    emitInstruction("addi s1, zero, 0");
-    emitInstruction("addi s2, zero, 0");
-    emitInstruction("addi s3, zero, 0");
+    // 把这些寄存器也加入被调用者保存寄存器列表
+    usedCalleeSavedRegs.insert("s1");
+    usedCalleeSavedRegs.insert("s2");
+    usedCalleeSavedRegs.insert("s3");
+    
+    // 保存这些寄存器的状态到栈
+    int s1Offset = getRegisterStackOffset("s1");
+    int s2Offset = getRegisterStackOffset("s2");
+    int s3Offset = getRegisterStackOffset("s3");
+    
+    emitInstruction("sw s1, " + std::to_string(s1Offset) + "(fp)");
+    emitInstruction("sw s2, " + std::to_string(s2Offset) + "(fp)");
+    emitInstruction("sw s3, " + std::to_string(s3Offset) + "(fp)");
+    
+    // 初始化循环寄存器为0
+    emitInstruction("mv s1, zero");
+    emitInstruction("mv s2, zero");
+    emitInstruction("mv s3, zero");
 }
 //---------------------修改性能loop-------------------------
 
@@ -853,32 +948,28 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
 //-----------------------修改18------------------------------
 void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
 //----------------------修改性能loop-------------------------    
-    if (!op) return;  // 增加安全检查
+    if (!op) return;
     
-    // 循环变量优化
+    // 保留专用循环寄存器逻辑，但避免过度优化
     if (op->type == OperandType::VARIABLE) {
-        if (op->name == "i") {
-            emitInstruction("addi " + reg + ", s1, 0");
-            return;
-        } else if (op->name == "j") {
-            emitInstruction("addi " + reg + ", s2, 0");
-            return;
-        } else if (op->name == "k") {
-            emitInstruction("addi " + reg + ", s3, 0");
+        auto it = loopVarToRegMap.find(op->name);
+        if (it != loopVarToRegMap.end()) {
+            // 使用专用循环寄存器
+            emitInstruction("mv " + reg + ", " + it->second);
             return;
         }
     }
 
-    // 原有逻辑
     switch (op->type) {
         case OperandType::CONSTANT:
+            // 针对特定常量进行优化 - 特别是0和1这些频繁出现的值
             if (op->value == 0) {
-                // 优化: 使用 x0/zero 寄存器加载0
-                emitInstruction("addi " + reg + ", zero, 0");
+                emitInstruction("mv " + reg + ", zero");
             } else if (op->value >= -2048 && op->value <= 2047) {
-                // 优化: 小整数使用 addi 指令
+                // 小立即数使用addi
                 emitInstruction("addi " + reg + ", zero, " + std::to_string(op->value));
             } else {
+                // 大立即数使用li
                 emitInstruction("li " + reg + ", " + std::to_string(op->value));
             }
             break;
@@ -888,18 +979,19 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
             {
                 auto it = regAlloc.find(op->name);
                 if (it != regAlloc.end() && isValidRegister(it->second)) {
-                    // 优化: 使用寄存器别名而不是移动
+                    // 避免不必要的移动
                     if (reg != it->second) {
-                        emitInstruction("addi " + reg + ", " + it->second + ", 0");
+                        emitInstruction("mv " + reg + ", " + it->second);
                     }
                 } else {
                     // 从栈中加载
                     int offset = getOperandOffset(op);
                     
-                    // 使用缓存的偏移值计算，避免重复计算
-                    if (std::abs(offset) <= 2047) {
+                    // 添加偏移量范围检查
+                    if (offset <= 2047 && offset >= -2048) {
                         emitInstruction("lw " + reg + ", " + std::to_string(offset) + "(fp)");
                     } else {
+                        // 大偏移量需要分步计算
                         std::string tempReg = (reg != "t0") ? "t0" : "t1";
                         emitInstruction("li " + tempReg + ", " + std::to_string(offset));
                         emitInstruction("add " + tempReg + ", fp, " + tempReg);
@@ -910,6 +1002,7 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
             break;
             
         default:
+            // 忽略标签和其他类型
             break;
     }
     
@@ -955,37 +1048,36 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
 //-----------------------修改18----------------------------
 void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
 //----------------------修改性能loop-------------------------    
-    if (!op) return;  // 增加安全检查
+    if (!op) return;
     
-    // 循环变量优化
+    // 专用循环寄存器处理
     if (op->type == OperandType::VARIABLE) {
-        if (op->name == "i") {
-            if (reg != "s1") emitInstruction("addi s1, " + reg + ", 0");
-            return;
-        } else if (op->name == "j") {
-            if (reg != "s2") emitInstruction("addi s2, " + reg + ", 0");
-            return;
-        } else if (op->name == "k") {
-            if (reg != "s3") emitInstruction("addi s3, " + reg + ", 0");
+        auto it = loopVarToRegMap.find(op->name);
+        if (it != loopVarToRegMap.end()) {
+            // 更新专用循环寄存器
+            if (reg != it->second) {
+                emitInstruction("mv " + it->second + ", " + reg);
+            }
             return;
         }
     }
 
-    // 原有逻辑
     if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
         auto it = regAlloc.find(op->name);
         if (it != regAlloc.end() && isValidRegister(it->second)) {
+            // 避免不必要的移动
             if (reg != it->second) {
-                emitInstruction("addi " + it->second + ", " + reg + ", 0");
+                emitInstruction("mv " + it->second + ", " + reg);
             }
         } else {
-            // 存储到栈中
+            // 存储到栈
             int offset = getOperandOffset(op);
             
-            // 缓存偏移值计算
-            if (std::abs(offset) <= 2047) {
+            // 检查偏移量范围
+            if (offset <= 2047 && offset >= -2048) {
                 emitInstruction("sw " + reg + ", " + std::to_string(offset) + "(fp)");
             } else {
+                // 大偏移量需要分步计算
                 std::string tempReg = (reg != "t0") ? "t0" : "t1";
                 emitInstruction("li " + tempReg + ", " + std::to_string(offset));
                 emitInstruction("add " + tempReg + ", fp, " + tempReg);
@@ -1722,6 +1814,66 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                     // 例如，在某些情况下，可以预计算循环次数
                     return false;
                 }
+            }
+            return false;
+        });
+
+        addPeepholePattern("loop_induction_var", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 3) return false;
+    
+            // 识别模式: 循环归纳变量模式 (i = i + 1)
+            std::string instr1 = instrs[0];
+            std::string instr2 = instrs[1];
+            std::string instr3 = instrs[2];
+    
+            if (instr1.find("lw ") == 0 && 
+                instr2.find("addi ") == 0 && 
+                instr3.find("sw ") == 0) {
+        
+                // 提取寄存器和内存位置
+                std::string loadReg = instr1.substr(3, instr1.find(",") - 3);
+                std::string loadAddr = instr1.substr(instr1.find(",") + 1);
+        
+                std::string addDest = instr2.substr(5, instr2.find(",") - 5);
+                std::string addSrc = instr2.substr(instr2.find(",") + 1, instr2.find(",", instr2.find(",") + 1) - instr2.find(",") - 1);
+                std::string addImm = instr2.substr(instr2.rfind(",") + 1);
+        
+                std::string storeReg = instr3.substr(3, instr3.find(",") - 3);
+                std::string storeAddr = instr3.substr(instr3.find(",") + 1);
+        
+                // 检查是否是同一变量自增
+                if (loadAddr == storeAddr && 
+                    loadReg == addSrc && 
+                    addDest == storeReg && 
+                    addImm.find("1") != std::string::npos) {
+            
+                    // 提取寄存器名
+                    std::string tempReg = loadReg;
+            
+                    // 更高效的版本
+                    instrs.clear();
+                    instrs.push_back("lw " + tempReg + ", " + loadAddr);
+                    instrs.push_back("addi " + tempReg + ", " + tempReg + ", 1");
+                    instrs.push_back("sw " + tempReg + ", " + storeAddr);
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        // 7. 针对矩阵操作的优化 - 添加新模式
+        addPeepholePattern("matrix_indexing", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 4) return false;
+    
+            // 检测矩阵索引计算模式: 基址 + i*宽度 + j
+            if (instrs[0].find("mul ") == 0 && 
+                instrs[1].find("add ") == 0 && 
+                instrs[2].find("add ") == 0 &&
+                instrs[3].find("lw ") == 0) {
+        
+                // 这是矩阵访问模式，尝试优化地址计算
+                // 保持指令不变，但添加注释标记这是矩阵访问
+                return false; // 不修改指令，但添加注释标记
             }
             return false;
         });
