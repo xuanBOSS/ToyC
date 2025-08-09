@@ -415,13 +415,18 @@ void IRGenerator::optimize() {
     // constantPropagationCFG();    // 在代码中传播常量值
     // deadCodeElimination();    // 删除无效果的代码
     // //controlFlowOptimization(); // 优化控制流（跳转、分支等）
-    
+
     // 基础优化
     constantFolding();         // 常量折叠
     constantPropagationCFG();  // 基于CFG的常量传播
     
+    // 代数和强度优化
+    algebraicSimplification(); // 代数简化
+    strengthReduction();       // 强度削弱
+
     // 进阶优化
     commonSubexpressionElimination(); // 公共子表达式消除
+    loopInvariantCodeMotion();        // 循环不变量外提
     controlFlowOptimization();       // 控制流优化
     deadCodeElimination();          // 死代码消除
     
@@ -2617,4 +2622,318 @@ bool IRGenerator::hasEffect(const std::shared_ptr<IRInstr>& instr) const {
         return true;
     }
     return false;
+}
+
+void IRGenerator::loopInvariantCodeMotion() {
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+    
+    // 找到所有循环（通过回边识别）
+    std::unordered_map<int, std::vector<int>> cfg;
+    for (auto& block : blocks) {
+        std::vector<int> succIds;
+        for (auto& succ : block->successors) {
+            succIds.push_back(succ->id);
+        }
+        cfg[block->id] = succIds;
+    }
+    
+    auto backEdges = findBackEdges(cfg);
+    
+    // 对每个循环进行处理
+    for (auto& edge : backEdges) {
+        int loopEnd = edge.first;    // 回边起点
+        int loopHeader = edge.second; // 回边终点（循环头）
+        
+        // 收集循环内所有基本块
+        std::set<int> loopBlocks;
+        std::queue<int> workList;
+        workList.push(loopHeader);
+        loopBlocks.insert(loopHeader);
+        
+        while (!workList.empty()) {
+            int blockId = workList.front();
+            workList.pop();
+            
+            for (auto succId : cfg[blockId]) {
+                if (succId != loopHeader && loopBlocks.find(succId) == loopBlocks.end()) {
+                    loopBlocks.insert(succId);
+                    workList.push(succId);
+                }
+            }
+        }
+        
+        // 找到循环入口前的基本块（前置块）
+        std::shared_ptr<BasicBlock> preHeader = nullptr;
+        for (auto& block : blocks) {
+            for (auto& succ : block->successors) {
+                if (succ->id == loopHeader && loopBlocks.find(block->id) == loopBlocks.end()) {
+                    // 找到循环外指向循环头的块
+                    if (!preHeader) {
+                        // 创建或使用前置块
+                        preHeader = block;
+                    }
+                }
+            }
+        }
+        
+        if (!preHeader) {
+            // 如果没有找到前置块，可能是主循环或者控制流复杂
+            // 可以考虑创建新的前置块，但这需要调整CFG
+            continue;
+        }
+        
+        // 收集循环内定义的变量
+        std::unordered_set<std::string> loopDefinedVars;
+        for (int blockId : loopBlocks) {
+            for (auto& instr : blocks[blockId]->instructions) {
+                auto defs = IRAnalyzer::getDefinedVariables(instr);
+                loopDefinedVars.insert(defs.begin(), defs.end());
+            }
+        }
+        
+        // 识别循环不变指令并移动到前置块
+        for (int blockId : loopBlocks) {
+            auto& block = blocks[blockId];
+            std::vector<std::shared_ptr<IRInstr>> newInstructions;
+            std::vector<std::shared_ptr<IRInstr>> invariantInstructions;
+            
+            for (auto& instr : block->instructions) {
+                bool isInvariant = false;
+                
+                // 检查是否是循环不变指令
+                if (!hasEffect(instr)) {
+                    isInvariant = true;
+                    
+                    // 检查指令使用的变量是否在循环内被修改
+                    auto usedVars = IRAnalyzer::getUsedVariables(instr);
+                    for (const auto& var : usedVars) {
+                        if (loopDefinedVars.find(var) != loopDefinedVars.end()) {
+                            isInvariant = false;
+                            break;
+                        }
+                    }
+                    
+                    // 检查指令定义的变量是否在循环内被多次使用
+                    auto definedVars = IRAnalyzer::getDefinedVariables(instr);
+                    for (const auto& var : definedVars) {
+                        if (loopDefinedVars.find(var) != loopDefinedVars.end()) {
+                            isInvariant = false;
+                            break;
+                        }
+                    }
+                }
+                
+                if (isInvariant) {
+                    invariantInstructions.push_back(instr);
+                } else {
+                    newInstructions.push_back(instr);
+                }
+            }
+            
+            // 将不变指令移至前置块末尾
+            if (!invariantInstructions.empty()) {
+                // 在前置块的末尾插入不变指令（在最后一条跳转指令之前）
+                if (!preHeader->instructions.empty() && 
+                    (std::dynamic_pointer_cast<GotoInstr>(preHeader->instructions.back()) || 
+                     std::dynamic_pointer_cast<IfGotoInstr>(preHeader->instructions.back()))) {
+                    
+                    auto lastInstr = preHeader->instructions.back();
+                    preHeader->instructions.pop_back();
+                    
+                    for (auto& instr : invariantInstructions) {
+                        preHeader->instructions.push_back(instr);
+                    }
+                    
+                    preHeader->instructions.push_back(lastInstr);
+                } else {
+                    for (auto& instr : invariantInstructions) {
+                        preHeader->instructions.push_back(instr);
+                    }
+                }
+                
+                // 更新当前块
+                block->instructions = newInstructions;
+            }
+        }
+    }
+    
+    // 重建指令列表
+    rebuildInstructionsFromBlocks(blocks);
+}
+
+void IRGenerator::strengthReduction() {
+    auto blocks = buildBasicBlocks();
+    
+    for (auto& block : blocks) {
+        for (size_t i = 0; i < block->instructions.size(); i++) {
+            auto instr = block->instructions[i];
+            
+            // 查找乘以2的模式，替换为左移或加法
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (binOp->opcode == OpCode::MUL) {
+                    // 检查是否乘以常量2
+                    if (binOp->right->type == OperandType::CONSTANT && binOp->right->value == 2) {
+                        // 创建等效的加法指令：a*2 -> a+a
+                        auto addInstr = std::make_shared<BinaryOpInstr>(
+                            OpCode::ADD, binOp->result, binOp->left, binOp->left);
+                        block->instructions[i] = addInstr;
+                    }
+                    // 检查是否乘以常量2的幂
+                    else if (binOp->right->type == OperandType::CONSTANT && 
+                             (binOp->right->value & (binOp->right->value - 1)) == 0 && 
+                             binOp->right->value > 0) {
+                        
+                        // 计算log2(value)得到移位数
+                        int value = binOp->right->value;
+                        int shiftAmount = 0;
+                        while (value > 1) {
+                            value >>= 1;
+                            shiftAmount++;
+                        }
+                        
+                        // 可以实现一个左移操作，但这里用乘法模拟
+                        // 实际上，这可能需要在IR中添加新的左移指令(OpCode::SHL)
+                        auto shiftConst = std::make_shared<Operand>(shiftAmount);
+                        // 这里假设我们有左移指令，实际实现可能不同
+                        auto shiftInstr = std::make_shared<BinaryOpInstr>(
+                            OpCode::MUL, binOp->result, binOp->left, 
+                            std::make_shared<Operand>(1 << shiftAmount));
+                        block->instructions[i] = shiftInstr;
+                    }
+                }
+                // 类似可以处理除以2的幂替换为右移
+            }
+        }
+    }
+    
+    rebuildInstructionsFromBlocks(blocks);
+}
+
+void IRGenerator::algebraicSimplification() {
+    auto blocks = buildBasicBlocks();
+    
+    for (auto& block : blocks) {
+        for (size_t i = 0; i < block->instructions.size(); i++) {
+            auto instr = block->instructions[i];
+            
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                // x + 0 = x
+                if (binOp->opcode == OpCode::ADD && 
+                    binOp->right->type == OperandType::CONSTANT && 
+                    binOp->right->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->left);
+                    block->instructions[i] = assignInstr;
+                }
+                // 0 + x = x
+                else if (binOp->opcode == OpCode::ADD && 
+                         binOp->left->type == OperandType::CONSTANT && 
+                         binOp->left->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->right);
+                    block->instructions[i] = assignInstr;
+                }
+                // x * 0 = 0
+                else if (binOp->opcode == OpCode::MUL && 
+                         (binOp->left->type == OperandType::CONSTANT && binOp->left->value == 0 || 
+                          binOp->right->type == OperandType::CONSTANT && binOp->right->value == 0)) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, std::make_shared<Operand>(0));
+                    block->instructions[i] = assignInstr;
+                }
+                // x * 1 = x
+                else if (binOp->opcode == OpCode::MUL && 
+                         binOp->right->type == OperandType::CONSTANT && 
+                         binOp->right->value == 1) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->left);
+                    block->instructions[i] = assignInstr;
+                }
+                // 1 * x = x
+                else if (binOp->opcode == OpCode::MUL && 
+                         binOp->left->type == OperandType::CONSTANT && 
+                         binOp->left->value == 1) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->right);
+                    block->instructions[i] = assignInstr;
+                }
+                // x / 1 = x
+                else if (binOp->opcode == OpCode::DIV && 
+                         binOp->right->type == OperandType::CONSTANT && 
+                         binOp->right->value == 1) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->left);
+                    block->instructions[i] = assignInstr;
+                }
+                // 0 / x = 0 (假设x不为0)
+                else if (binOp->opcode == OpCode::DIV && 
+                         binOp->left->type == OperandType::CONSTANT && 
+                         binOp->left->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, std::make_shared<Operand>(0));
+                    block->instructions[i] = assignInstr;
+                }
+                // x - 0 = x
+                else if (binOp->opcode == OpCode::SUB && 
+                         binOp->right->type == OperandType::CONSTANT && 
+                         binOp->right->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, binOp->left);
+                    block->instructions[i] = assignInstr;
+                }
+                // x - x = 0
+                else if (binOp->opcode == OpCode::SUB && 
+                         binOp->left->type != OperandType::CONSTANT && 
+                         binOp->right->type != OperandType::CONSTANT &&
+                         binOp->left->toString() == binOp->right->toString()) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, std::make_shared<Operand>(0));
+                    block->instructions[i] = assignInstr;
+                }
+                // 其他代数简化规则...
+            }
+            // 一元操作的简化
+            else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                // !0 = 1
+                if (unaryOp->opcode == OpCode::NOT && 
+                    unaryOp->operand->type == OperandType::CONSTANT && 
+                    unaryOp->operand->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        unaryOp->result, std::make_shared<Operand>(1));
+                    block->instructions[i] = assignInstr;
+                }
+                // !非0 = 0
+                else if (unaryOp->opcode == OpCode::NOT && 
+                         unaryOp->operand->type == OperandType::CONSTANT && 
+                         unaryOp->operand->value != 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        unaryOp->result, std::make_shared<Operand>(0));
+                    block->instructions[i] = assignInstr;
+                }
+                // -0 = 0
+                else if (unaryOp->opcode == OpCode::NEG && 
+                         unaryOp->operand->type == OperandType::CONSTANT && 
+                         unaryOp->operand->value == 0) {
+                    
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        unaryOp->result, std::make_shared<Operand>(0));
+                    block->instructions[i] = assignInstr;
+                }
+            }
+        }
+    }
+    
+    rebuildInstructionsFromBlocks(blocks);
 }

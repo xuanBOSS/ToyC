@@ -207,6 +207,15 @@ private:
     void rebuildInstructionsFromBlocks(const std::vector<std::shared_ptr<BasicBlock>>& blocks);
     // 判断指令是否有副作用
     bool hasEffect(const std::shared_ptr<IRInstr>& instr) const;
+
+    //循环不变量外提
+    void loopInvariantCodeMotion();
+
+    // 强度削弱
+    void strengthReduction();
+
+    //代数简化 
+    void algebraicSimplification();
 };
 
 // IR优化器接口
