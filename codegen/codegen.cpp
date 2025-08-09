@@ -8,6 +8,8 @@
 #include <queue>
 #include <stack>
 #include <limits>
+#include <memory>  // 为智能指针
+#include <typeinfo>  // 为动态类型信息
 
 // 代码生成器构造函数，初始化输出文件和配置
 CodeGenerator::CodeGenerator(std::ostream& outputStream,  
@@ -103,7 +105,12 @@ void CodeGenerator::generate() {
     if (config.enablePeepholeOptimizations) {
         peepholeOptimize(asmInstructions);
     }
-    
+
+    // 如果启用了指令调度优化
+    if (config.enableInstructionScheduling) {
+        asmInstructions = InstructionScheduler::scheduleInstructions(asmInstructions);
+    }
+
     // 如果启用了栈布局优化
     if (config.optimizeStackLayout) {
         optimizeStackLayout();
@@ -148,7 +155,41 @@ void CodeGenerator::emitComment(const std::string& comment) {
 // 输出指令
 // 在汇编代码中添加指令行
 void CodeGenerator::emitInstruction(const std::string& instr) {
+     // 避免生成冗余指令
+    
+    // 检查上一条指令
+    if (!lastInstruction.empty()) {
+        // 检查是否是相同的指令
+        if (lastInstruction == instr) {
+            // 忽略重复指令
+            return;
+        }
+        
+        // 检查特定的冗余模式
+        
+        // 模式1: mv 后跟 mv
+        if (lastInstruction.find("mv ") == 0 && instr.find("mv ") == 0) {
+            std::string lastDst = lastInstruction.substr(3, lastInstruction.find(",") - 3);
+            std::string lastSrc = lastInstruction.substr(lastInstruction.find(",") + 1);
+            lastSrc = lastSrc.substr(lastSrc.find_first_not_of(" \t"));
+            
+            std::string currDst = instr.substr(3, instr.find(",") - 3);
+            std::string currSrc = instr.substr(instr.find(",") + 1);
+            currSrc = currSrc.substr(currSrc.find_first_not_of(" \t"));
+            
+            // 如果上一条是 mv x, y 而当前是 mv z, x
+            if (lastDst == currSrc) {
+                // 可以直接输出 mv z, y
+                output << "\t" << "mv " << currDst << ", " << lastSrc << "\n";
+                lastInstruction = "mv " + currDst + ", " + lastSrc;
+                return;
+            }
+        }
+    }
+    
+    // 生成指令
     output << "\t" << instr << "\n";
+    lastInstruction = instr;
 }
 
 // 输出标签
@@ -3151,3 +3192,650 @@ std::map<std::string, std::string> GraphColoringRegisterAllocator::color(
     return allocation;
 }
 
+//指令调度
+std::vector<std::string> InstructionScheduler::scheduleInstructions(
+    const std::vector<std::string>& instructions) {
+    
+    // 如果指令数量太少，不需要调度
+    if (instructions.size() <= 2) {
+        return instructions;
+    }
+    
+    // 构建指令依赖图
+    auto dependencyGraph = buildDependencyGraph(instructions);
+    
+    // 拓扑排序指令
+    std::vector<std::string> scheduledInstructions;
+    std::set<int> visited;
+    std::set<int> ready;
+    
+    // 初始化就绪集合为没有前驱的指令
+    for (int i = 0; i < instructions.size(); i++) {
+        bool hasIncomingEdge = false;
+        for (const auto& [_, deps] : dependencyGraph) {
+            if (deps.find(i) != deps.end()) {
+                hasIncomingEdge = true;
+                break;
+            }
+        }
+        if (!hasIncomingEdge) {
+            ready.insert(i);
+        }
+    }
+    
+    // 进行调度
+    while (!ready.empty()) {
+        // 选择最优的下一条指令
+        int bestInstr = -1;
+        int bestScore = -1;
+        
+        for (int instr : ready) {
+            // 计算指令的优先级得分
+            int score = 0;
+            
+            // 控制流指令优先级较低（延迟执行）
+            if (isControlFlowInstruction(instructions[instr])) {
+                score -= 10;
+            }
+            
+            // 内存访问指令尽量安排在早期
+            if (instructions[instr].find("lw ") == 0 || 
+                instructions[instr].find("lb ") == 0) {
+                score += 5;
+            }
+            
+            // 依赖较多的指令优先级较高
+            score += dependencyGraph[instr].size() * 2;
+            
+            if (score > bestScore) {
+                bestScore = score;
+                bestInstr = instr;
+            }
+        }
+        
+        // 没有可选指令，退出
+        if (bestInstr == -1) break;
+        
+        // 将选择的指令添加到调度结果
+        scheduledInstructions.push_back(instructions[bestInstr]);
+        ready.erase(bestInstr);
+        visited.insert(bestInstr);
+        
+        // 更新就绪集合
+        for (int i = 0; i < instructions.size(); i++) {
+            if (visited.find(i) != visited.end()) continue;
+            
+            // 检查该指令的所有前驱是否已访问
+            bool allPredecessorsVisited = true;
+            for (const auto& [from, deps] : dependencyGraph) {
+                if (deps.find(i) != deps.end() && visited.find(from) == visited.end()) {
+                    allPredecessorsVisited = false;
+                    break;
+                }
+            }
+            
+            if (allPredecessorsVisited) {
+                ready.insert(i);
+            }
+        }
+    }
+    
+    // 如果没有完全调度所有指令，按原顺序添加剩余指令
+    if (scheduledInstructions.size() < instructions.size()) {
+        for (int i = 0; i < instructions.size(); i++) {
+            if (visited.find(i) == visited.end()) {
+                scheduledInstructions.push_back(instructions[i]);
+            }
+        }
+    }
+    
+    return scheduledInstructions;
+}
+
+std::map<int, std::set<int>> InstructionScheduler::buildDependencyGraph(
+    const std::vector<std::string>& instructions) {
+    
+    std::map<int, std::set<int>> graph;
+    
+    // 初始化图
+    for (int i = 0; i < instructions.size(); i++) {
+        graph[i] = std::set<int>();
+    }
+    
+    // 构建依赖边
+    for (int i = 0; i < instructions.size(); i++) {
+        for (int j = i + 1; j < instructions.size(); j++) {
+            // 如果指令j依赖于指令i，添加一条从i到j的边
+            if (hasDependency(instructions[i], instructions[j])) {
+                graph[i].insert(j);
+            }
+            // 反向依赖检查
+            if (hasDependency(instructions[j], instructions[i])) {
+                graph[j].insert(i);
+            }
+        }
+        
+        // 控制流指令必须保持顺序
+        if (isControlFlowInstruction(instructions[i])) {
+            for (int j = i + 1; j < instructions.size(); j++) {
+                graph[i].insert(j);
+            }
+        }
+    }
+    
+    return graph;
+}
+
+bool InstructionScheduler::hasDependency(const std::string& instr1, const std::string& instr2) {
+    // 如果两条指令中有一条是控制流指令，保持原顺序
+    if (isControlFlowInstruction(instr1) || isControlFlowInstruction(instr2)) {
+        return true;
+    }
+    
+    // 获取两条指令定义和使用的寄存器
+    auto def1 = getDefinedRegisters(instr1);
+    auto use1 = getUsedRegisters(instr1);
+    auto def2 = getDefinedRegisters(instr2);
+    auto use2 = getUsedRegisters(instr2);
+    
+    // 检查是否存在依赖关系
+    // 写后读 (WAR) 依赖：指令2使用了指令1定义的寄存器
+    for (const auto& reg : def1) {
+        if (use2.find(reg) != use2.end()) {
+            return true;
+        }
+    }
+    
+    // 读后写 (RAW) 依赖：指令2定义了指令1使用的寄存器
+    for (const auto& reg : use1) {
+        if (def2.find(reg) != def2.end()) {
+            return true;
+        }
+    }
+    
+    // 写后写 (WAW) 依赖：两条指令定义了相同的寄存器
+    for (const auto& reg : def1) {
+        if (def2.find(reg) != def2.end()) {
+            return true;
+        }
+    }
+    
+    // 内存访问指令可能有隐式依赖，保守处理
+    if ((instr1.find("lw ") == 0 || instr1.find("sw ") == 0) && 
+        (instr2.find("lw ") == 0 || instr2.find("sw ") == 0)) {
+        return true;
+    }
+    
+    return false;
+}
+
+std::set<std::string> InstructionScheduler::getDefinedRegisters(const std::string& instr) {
+    std::set<std::string> defined;
+    
+    // 找到指令的目标寄存器
+    if (instr.find("mv ") == 0 || 
+        instr.find("li ") == 0 || 
+        instr.find("add") == 0 || 
+        instr.find("sub") == 0 || 
+        instr.find("mul") == 0 || 
+        instr.find("div") == 0 || 
+        instr.find("rem") == 0 || 
+        instr.find("and") == 0 || 
+        instr.find("or") == 0 || 
+        instr.find("xor") == 0 || 
+        instr.find("sll") == 0 || 
+        instr.find("srl") == 0 || 
+        instr.find("sra") == 0 || 
+        instr.find("slt") == 0 || 
+        instr.find("sltu") == 0 || 
+        instr.find("lw ") == 0 || 
+        instr.find("lb ") == 0 || 
+        instr.find("lh ") == 0 || 
+        instr.find("lbu ") == 0 || 
+        instr.find("lhu ") == 0) {
+        
+        // 提取目标寄存器
+        std::string reg = instr.substr(instr.find(" ") + 1, instr.find(",") - instr.find(" ") - 1);
+        defined.insert(reg);
+    }
+    
+    return defined;
+}
+
+std::set<std::string> InstructionScheduler::getUsedRegisters(const std::string& instr) {
+    std::set<std::string> used;
+    
+    // 提取所有源寄存器
+    size_t pos = instr.find(",");
+    if (pos != std::string::npos) {
+        std::string rest = instr.substr(pos + 1);
+        
+        // 处理带有多个操作数的指令
+        while (!rest.empty()) {
+            size_t nextComma = rest.find(",");
+            std::string operand;
+            
+            if (nextComma != std::string::npos) {
+                operand = rest.substr(0, nextComma);
+                rest = rest.substr(nextComma + 1);
+            } else {
+                operand = rest;
+                rest = "";
+            }
+            
+            // 去除前导空格
+            operand = operand.substr(operand.find_first_not_of(" \t"));
+            
+            // 检查是否是寄存器
+            if (operand.find("(") != std::string::npos) {
+                // 处理形如 "offset(reg)" 的模式
+                size_t openParen = operand.find("(");
+                size_t closeParen = operand.find(")");
+                if (openParen != std::string::npos && closeParen != std::string::npos) {
+                    std::string reg = operand.substr(openParen + 1, closeParen - openParen - 1);
+                    used.insert(reg);
+                }
+            } else if (operand.find("x") == 0 || 
+                      operand.find("a") == 0 || 
+                      operand.find("s") == 0 || 
+                      operand.find("t") == 0 || 
+                      operand.find("zero") == 0 || 
+                      operand.find("ra") == 0 || 
+                      operand.find("sp") == 0 || 
+                      operand.find("gp") == 0 || 
+                      operand.find("tp") == 0 || 
+                      operand.find("fp") == 0) {
+                // 直接是寄存器名
+                used.insert(operand);
+            }
+        }
+    }
+    
+    return used;
+}
+
+bool InstructionScheduler::isControlFlowInstruction(const std::string& instr) {
+    return instr.find("j ") == 0 || 
+           instr.find("jr ") == 0 || 
+           instr.find("beq") == 0 || 
+           instr.find("bne") == 0 || 
+           instr.find("blt") == 0 || 
+           instr.find("bge") == 0 || 
+           instr.find("bltu") == 0 || 
+           instr.find("bgeu") == 0 || 
+           instr.find("call ") == 0 || 
+           instr.find("ret") == 0;
+}
+
+// 分析循环结构并生成展开信息
+std::vector<LoopInfo> LoopUnroller::identifyLoops(
+    const std::vector<std::shared_ptr<IRInstr>>& instructions) {
+    
+    std::vector<LoopInfo> loops;
+    std::map<std::string, int> labelToIndex;
+    
+    // 第一步：找到所有标签位置，构建标签到指令索引的映射
+    for (int i = 0; i < instructions.size(); i++) {
+        if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(instructions[i])) {
+            labelToIndex[labelInstr->label] = i;
+        }
+    }
+    
+    // 第二步：查找循环结构（向后跳转的模式）
+    for (int i = 0; i < instructions.size(); i++) {
+        // 检查无条件跳转指令
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instructions[i])) {
+            auto it = labelToIndex.find(gotoInstr->target->name);
+            // 如果跳转目标存在且是向后跳转（循环的典型特征）
+            if (it != labelToIndex.end() && it->second < i) {
+                // 发现潜在循环
+                LoopInfo loop;
+                loop.startIndex = it->second;  // 循环开始位置（标签位置）
+                loop.endIndex = i;             // 循环结束位置（跳转指令位置）
+                
+                // 尝试识别归纳变量
+                loop.inductionVar = findInductionVariable(instructions, loop.startIndex, loop.endIndex);
+                
+                // 只有找到归纳变量的循环才考虑展开
+                if (!loop.inductionVar.empty()) {
+                    // 确定展开因子
+                    loop.unrollFactor = determineUnrollFactor(loop, instructions);
+                    loops.push_back(loop);
+                }
+            }
+        } 
+        // 检查条件跳转指令
+        else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instructions[i])) {
+            auto it = labelToIndex.find(ifGotoInstr->target->name);
+            // 检查是否是向前跳转（可能是循环结束条件）
+            if (it != labelToIndex.end() && it->second < i) {
+                // 可能是do-while循环或循环内部的条件分支
+                LoopInfo loop;
+                loop.startIndex = it->second;
+                loop.endIndex = i;
+                
+                // 尝试识别归纳变量
+                loop.inductionVar = findInductionVariable(instructions, loop.startIndex, loop.endIndex);
+                
+                if (!loop.inductionVar.empty()) {
+                    // 确定展开因子
+                    loop.unrollFactor = determineUnrollFactor(loop, instructions);
+                    loops.push_back(loop);
+                }
+            }
+        }
+    }
+    
+    // 第三步：处理嵌套循环（可选 - 更复杂的情况）
+    // 对已识别的循环进行排序，处理嵌套关系
+    std::sort(loops.begin(), loops.end(), [](const LoopInfo& a, const LoopInfo& b) {
+        // 先按开始位置排序
+        if (a.startIndex != b.startIndex) {
+            return a.startIndex < b.startIndex;
+        }
+        // 如果开始位置相同，按结束位置降序排列（外层循环先处理）
+        return a.endIndex > b.endIndex;
+    });
+    
+    // 移除完全包含在其他循环内部的循环（可选）
+    std::vector<LoopInfo> filteredLoops;
+    for (const auto& loop : loops) {
+        bool isNested = false;
+        for (const auto& outerLoop : loops) {
+            if (&loop != &outerLoop && 
+                loop.startIndex >= outerLoop.startIndex && 
+                loop.endIndex <= outerLoop.endIndex) {
+                isNested = true;
+                break;
+            }
+        }
+        
+        // 如果不是嵌套循环或是我们想要处理的特定嵌套循环，则保留
+        if (!isNested || isLoopUnrollable(loop, instructions)) {
+            filteredLoops.push_back(loop);
+        }
+    }
+    
+    return filteredLoops;
+}
+
+// 查找循环的归纳变量
+std::string LoopUnroller::findInductionVariable(
+    const std::vector<std::shared_ptr<IRInstr>>& instructions, 
+    int start, int end) {
+    
+    // 归纳变量通常是循环中以固定步长增加或减少的变量
+    // 典型模式是 i = i + 1 或 i = i - 1
+    
+    for (int i = start; i <= end; i++) {
+        // 检查是否是二元操作指令
+        if (auto binaryOp = std::dynamic_pointer_cast<BinaryOpInstr>(instructions[i])) {
+            // 检查是否是形如 i = i + 1 的加法操作
+            if (binaryOp->opcode == OpCode::ADD && 
+                binaryOp->result && binaryOp->result->type == OperandType::VARIABLE &&
+                binaryOp->left && binaryOp->left->type == OperandType::VARIABLE &&
+                binaryOp->right && binaryOp->right->type == OperandType::CONSTANT &&
+                binaryOp->result->name == binaryOp->left->name) {
+                
+                // 找到了循环计数器变量
+                return binaryOp->result->name;
+            }
+            // 检查是否是形如 i = i - 1 的减法操作（递减循环）
+            else if (binaryOp->opcode == OpCode::SUB && 
+                     binaryOp->result && binaryOp->result->type == OperandType::VARIABLE &&
+                     binaryOp->left && binaryOp->left->type == OperandType::VARIABLE &&
+                     binaryOp->right && binaryOp->right->type == OperandType::CONSTANT &&
+                     binaryOp->result->name == binaryOp->left->name) {
+                
+                return binaryOp->result->name;
+            }
+        }
+        
+        // 也可以检查赋值操作中的归纳变量更新
+        if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instructions[i])) {
+            // 检查是否是形如 i = i + 1 的加法结果赋值
+            if (assignInstr->target && assignInstr->target->type == OperandType::VARIABLE &&
+                assignInstr->source && assignInstr->source->type == OperandType::TEMP) {
+                
+                // 查找前面是否有对应的计算指令
+                if (i > 0) {
+                    auto prevInstr = instructions[i-1];
+                    if (auto prevBinaryOp = std::dynamic_pointer_cast<BinaryOpInstr>(prevInstr)) {
+                        if ((prevBinaryOp->opcode == OpCode::ADD || prevBinaryOp->opcode == OpCode::SUB) &&
+                            prevBinaryOp->result && prevBinaryOp->result->name == assignInstr->source->name &&
+                            prevBinaryOp->left && prevBinaryOp->left->type == OperandType::VARIABLE &&
+                            prevBinaryOp->left->name == assignInstr->target->name &&
+                            prevBinaryOp->right && prevBinaryOp->right->type == OperandType::CONSTANT) {
+                            
+                            return assignInstr->target->name;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 没有找到归纳变量
+    return "";
+}
+
+// 判断循环是否适合展开
+bool LoopUnroller::isLoopUnrollable(const LoopInfo& loop, 
+                                   const std::vector<std::shared_ptr<IRInstr>>& instructions) {
+    
+    // 循环太大不适合展开
+    int loopSize = loop.endIndex - loop.startIndex + 1;
+    if (loopSize > 50) {
+        return false;
+    }
+    
+    // 没有归纳变量的循环不能展开
+    if (loop.inductionVar.empty()) {
+        return false;
+    }
+    
+    // 检查循环内部是否有复杂控制流或函数调用
+    int jumpCount = 0;
+    bool hasFunctionCall = false;
+    bool hasNestedLoop = false;
+    
+    for (int i = loop.startIndex; i <= loop.endIndex; i++) {
+        // 检查函数调用
+        if (std::dynamic_pointer_cast<CallInstr>(instructions[i])) {
+            hasFunctionCall = true;
+            // 包含函数调用的循环通常不适合展开
+            return false;
+        }
+        
+        // 检查内部跳转（除了循环本身的回跳）
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instructions[i])) {
+            auto targetLabel = gotoInstr->target->name;
+            bool isLoopBackEdge = false;
+            
+            // 检查是否是循环的回边
+            if (i == loop.endIndex) {
+                for (int j = loop.startIndex; j <= loop.startIndex + 2 && j < instructions.size(); j++) {
+                    if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(instructions[j])) {
+                        if (labelInstr->label == targetLabel) {
+                            isLoopBackEdge = true;
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            if (!isLoopBackEdge) {
+                jumpCount++;
+                // 过多的跳转指令表示复杂控制流
+                if (jumpCount > 2) {
+                    return false;
+                }
+            }
+        }
+        else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instructions[i])) {
+            auto targetLabel = ifGotoInstr->target->name;
+            bool isExitCondition = false;
+            
+            // 检查是否是循环的出口条件
+            if (i > loop.startIndex && i < loop.endIndex) {
+                // 如果条件跳转目标在循环外部，这可能是循环的正常出口
+                auto it = std::find_if(instructions.begin(), instructions.end(),
+                    [&targetLabel](const std::shared_ptr<IRInstr>& instr) {
+                        auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(instr);
+                        return labelInstr && labelInstr->label == targetLabel;
+                    });
+                
+                if (it != instructions.end()) {
+                    int targetIndex = std::distance(instructions.begin(), it);
+                    if (targetIndex > loop.endIndex || targetIndex < loop.startIndex) {
+                        isExitCondition = true;
+                    }
+                }
+            }
+            
+            if (!isExitCondition) {
+                jumpCount++;
+                // 过多的跳转指令表示复杂控制流
+                if (jumpCount > 2) {
+                    return false;
+                }
+            }
+        }
+        
+        // 检查是否有嵌套循环（通过跳转模式识别）
+        // 这是一个简化的检测，实际可能需要更复杂的分析
+        if (i > loop.startIndex && i < loop.endIndex) {
+            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instructions[i])) {
+                auto targetLabel = gotoInstr->target->name;
+                // 如果这个跳转目标是循环内部的一个位置，且不是循环起点
+                for (int j = loop.startIndex + 1; j < i; j++) {
+                    if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(instructions[j])) {
+                        if (labelInstr->label == targetLabel) {
+                            hasNestedLoop = true;
+                            // 嵌套循环通常不适合展开
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 检查循环体内指令的性质
+    int memoryAccessCount = 0;
+    int computeIntensiveCount = 0;
+    
+    for (int i = loop.startIndex; i <= loop.endIndex; i++) {
+        std::string instrStr = instructions[i]->toString();
+        
+        // 计算内存访问指令数量
+        if (instrStr.find("load") != std::string::npos || 
+            instrStr.find("store") != std::string::npos || 
+            instrStr.find("[]") != std::string::npos) {
+            memoryAccessCount++;
+        }
+        
+        // 计算计算密集型指令数量
+        if (instrStr.find("mul") != std::string::npos || 
+            instrStr.find("div") != std::string::npos || 
+            instrStr.find("mod") != std::string::npos) {
+            computeIntensiveCount++;
+        }
+    }
+    
+    // 如果循环主要是内存访问，展开可能不会带来很大收益
+    if (memoryAccessCount > loopSize / 2) {
+        // 内存密集型循环可能会因展开而导致缓存抖动
+        // 但如果循环很小，展开仍可能有益
+        return loopSize < 10;
+    }
+    
+    // 计算密集型循环通常适合展开
+    if (computeIntensiveCount > 0) {
+        return true;
+    }
+    
+    // 默认情况下，简单循环适合展开
+    return true;
+}
+
+// 确定循环展开因子
+int LoopUnroller::determineUnrollFactor(const LoopInfo& loop,
+                                       const std::vector<std::shared_ptr<IRInstr>>& instructions) {
+    
+    // 循环体大小（指令数量）
+    int loopSize = loop.endIndex - loop.startIndex + 1;
+    
+    // 分析循环迭代次数（如果可以静态确定）
+    int iterationCount = -1; // 未知迭代次数
+    
+    // 尝试确定循环的迭代次数
+    for (int i = loop.startIndex; i <= loop.endIndex; i++) {
+        if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instructions[i])) {
+            if (auto binaryOp = std::dynamic_pointer_cast<BinaryOpInstr>(instructions[i-1])) {
+                // 查找形如 if (i < N) goto loop_start 的模式
+                if ((binaryOp->opcode == OpCode::LT || binaryOp->opcode == OpCode::LE) &&
+                    binaryOp->left && binaryOp->left->type == OperandType::VARIABLE &&
+                    binaryOp->left->name == loop.inductionVar &&
+                    binaryOp->right && binaryOp->right->type == OperandType::CONSTANT) {
+                    
+                    // 简单情况：假设步长为1的递增循环
+                    iterationCount = binaryOp->right->value;
+                    break;
+                }
+                // 查找形如 if (i > 0) goto loop_start 的模式（递减循环）
+                else if ((binaryOp->opcode == OpCode::GT || binaryOp->opcode == OpCode::GE) &&
+                         binaryOp->left && binaryOp->left->type == OperandType::VARIABLE &&
+                         binaryOp->left->name == loop.inductionVar &&
+                         binaryOp->right && binaryOp->right->type == OperandType::CONSTANT) {
+                    
+                    // 简单情况：假设步长为1的递减循环
+                    iterationCount = binaryOp->left->value - binaryOp->right->value;
+                    break;
+                }
+            }
+        }
+    }
+    
+    // 如果能确定循环的迭代次数
+    if (iterationCount > 0 && iterationCount <= 8) {
+        // 迭代次数很少，完全展开
+        return 0; // 0表示完全展开
+    }
+    
+    // 基于循环体大小确定展开因子
+    if (loopSize <= 5) {
+        // 很小的循环体，完全展开或大因子展开
+        return (iterationCount > 0 && iterationCount <= 16) ? 0 : 8;
+    } 
+    else if (loopSize <= 15) {
+        // 小循环体，中等因子展开
+        return 4;
+    } 
+    else if (loopSize <= 30) {
+        // 中等循环体，小因子展开
+        return 2;
+    } 
+    else {
+        // 大循环体，不展开或最小因子展开
+        return loopSize <= 40 ? 2 : 1;
+    }
+    
+    // 如果循环体包含大量计算密集型操作，可能需要调整展开因子
+    int computeIntensiveCount = 0;
+    for (int i = loop.startIndex; i <= loop.endIndex; i++) {
+        std::string instrStr = instructions[i]->toString();
+        if (instrStr.find("mul") != std::string::npos || 
+            instrStr.find("div") != std::string::npos) {
+            computeIntensiveCount++;
+        }
+    }
+    
+    // 如果计算密集型指令占比高，适当减小展开因子以避免指令缓存压力
+    if (computeIntensiveCount > loopSize / 3) {
+        return std::max(1, loopSize <= 10 ? 2 : 1);
+    }
+    
+    // 默认展开因子
+    return loopSize <= 20 ? 4 : 2;
+}
