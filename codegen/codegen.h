@@ -22,14 +22,11 @@ enum class RegisterAllocStrategy {
 // 代码生成配置选项结构体
 // 控制代码生成过程中的各种优化和行为
 struct CodeGenConfig {
-    bool optimizeStackLayout = false;          // 优化栈布局
-    bool eliminateDeadStores = false;          // 消除无用存储
-    bool enablePeepholeOptimizations = false;  // 启用窥孔优化
-    bool enableInlineAsm = false;              // 启用内联汇编
-    bool optimizeLoops = true;                 // 启用循环优化
-    bool enableInstructionScheduling = false;  // 启用指令调度
-    bool enableLoopUnrolling = false;          // 启用循环展开
-    bool optimizeGlobalVars = false;           // 优化全局变量访问
+    bool optimizeStackLayout = false;     // 优化栈布局
+    bool eliminateDeadStores = false;     // 消除无用存储
+    bool enablePeepholeOptimizations = false; // 启用窥孔优化
+    bool enableInlineAsm = false;         // 启用内联汇编
+    bool optimizeLoops = true;            // 启用循环优化
     RegisterAllocStrategy regAllocStrategy = RegisterAllocStrategy::NAIVE; // 寄存器分配策略
 };
 
@@ -65,7 +62,7 @@ private:
     std::set<std::string> usedCallerSavedRegs;  // 实际使用的调用者保存寄存器
     std::map<std::string, int> regOffsetMap;  // 记录寄存器到栈偏移量的映射
     int currentStackOffset = 0;               // 当前栈顶偏移
-    std::string lastInstruction;              // 记录上一条生成的指令
+    
     // 当前函数的上下文信息
     std::string currentFunction;               // 当前处理的函数名
     bool isInLoop = false;                     // 是否在循环内
@@ -181,8 +178,7 @@ private:
     void restoreCallerSavedRegs();   // 恢复调用者保存的寄存器
     void saveCalleeSavedRegs();      // 保存被调用者保存的寄存器
     void restoreCalleeSavedRegs();   // 恢复被调用者保存的寄存器
-    void preAllocateLoopRegisters(); // 为常见循环变量预分配寄存器
-
+    
     // 寄存器管理
     void initializeRegisters();      // 初始化寄存器信息
     void resetStackOffset();         // 初始化栈顶偏移
@@ -204,9 +200,7 @@ private:
     }
     int getLocalVarsSize() const { return localVarsSize; }
     void incrementLocalVarsSize(int size) { localVarsSize += size; }
-    bool isPowerOfTwo(int n);
-    int log2(int n);
-
+    
     // 循环检测
     bool detectIntensiveLoops();                         // 检测是否包含循环密集代码
     void optimizeForLoops();                             // 优化循环密集代码
@@ -298,67 +292,10 @@ private:
         const std::vector<std::shared_ptr<IRInstr>>& instructions);
     
     std::vector<std::string> simplify(
-        std::map<std::string, std::set<std::string>>& graph,
-        const std::map<std::string, int>& spillCosts);
+        std::map<std::string, std::set<std::string>>& graph);
     
     std::map<std::string, std::string> color(
         const std::vector<std::string>& simplifiedOrder,
         const std::map<std::string, std::set<std::string>>& originalGraph,
         const std::vector<Register>& availableRegs);
-
-    std::map<std::string, int> calculateSpillCosts(
-        const std::vector<std::shared_ptr<IRInstr>>& instructions);
-};
-
-// 指令调度器类
-class InstructionScheduler {
-public:
-    // 对指令序列进行调度优化
-    static std::vector<std::string> scheduleInstructions(
-        const std::vector<std::string>& instructions);
-
-private:
-    // 构建指令依赖图
-    static std::map<int, std::set<int>> buildDependencyGraph(
-        const std::vector<std::string>& instructions);
-    
-    // 判断两条指令之间是否存在依赖
-    static bool hasDependency(const std::string& instr1, const std::string& instr2);
-    
-    // 获取指令定义的寄存器
-    static std::set<std::string> getDefinedRegisters(const std::string& instr);
-    
-    // 获取指令使用的寄存器
-    static std::set<std::string> getUsedRegisters(const std::string& instr);
-    
-    // 是否是控制流指令
-    static bool isControlFlowInstruction(const std::string& instr);
-};
-
-// 循环展开优化器类
-class LoopUnroller {
-public:
-    // 分析循环结构并生成展开信息
-    static std::vector<LoopInfo> identifyLoops(
-        const std::vector<std::shared_ptr<IRInstr>>& instructions);
-    
-    static std::string LoopUnroller::findInductionVariable(
-        const std::vector<std::shared_ptr<IRInstr>>& instructions, 
-        int start, int end);
-
-    // 判断循环是否适合展开
-    static bool isLoopUnrollable(const LoopInfo& loop, 
-                                const std::vector<std::shared_ptr<IRInstr>>& instructions);
-    
-    // 确定循环展开因子
-    static int determineUnrollFactor(const LoopInfo& loop,
-                                    const std::vector<std::shared_ptr<IRInstr>>& instructions);
-};
-
-// 循环信息结构体
-struct LoopInfo {
-    int startIndex;   // 循环开始的指令索引
-    int endIndex;     // 循环结束的指令索引
-    std::string inductionVar;  // 归纳变量名
-    int unrollFactor; // 展开因子，0表示完全展开
-};
+};                  
