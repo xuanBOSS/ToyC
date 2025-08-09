@@ -410,11 +410,25 @@ void IRGenerator::dumpIR(const std::string& filename) const {
  * 对IR指令应用各种优化技术。
  */
 void IRGenerator::optimize() {
-    // 按顺序应用每种优化技术
-    constantFolding();        // 在编译时评估常量表达式
-    constantPropagationCFG();    // 在代码中传播常量值
-    deadCodeElimination();    // 删除无效果的代码
-    //controlFlowOptimization(); // 优化控制流（跳转、分支等）
+    // // 按顺序应用每种优化技术
+    // constantFolding();        // 在编译时评估常量表达式
+    // constantPropagationCFG();    // 在代码中传播常量值
+    // deadCodeElimination();    // 删除无效果的代码
+    // //controlFlowOptimization(); // 优化控制流（跳转、分支等）
+    
+    // 基础优化
+    constantFolding();         // 常量折叠
+    constantPropagationCFG();  // 基于CFG的常量传播
+    
+    // 进阶优化
+    commonSubexpressionElimination(); // 公共子表达式消除
+    controlFlowOptimization();       // 控制流优化
+    deadCodeElimination();          // 死代码消除
+    
+    // 再次应用基础优化，捕获新的优化机会
+    constantFolding();
+    constantPropagationCFG();
+    deadCodeElimination();
 }
 
 /**
@@ -1407,6 +1421,145 @@ void IRGenerator::deadCodeElimination() {
 }*/
 
 /**
+ * 控制流优化。
+ * 
+ * 优化程序的控制流，包括跳转和分支。
+ * 例如，消除冗余跳转，优化分支条件，简化控制流模式。
+ */
+void IRGenerator::controlFlowOptimization() {
+    bool changed = true;
+    
+    while (changed) {
+        changed = false;
+        
+        // 构建基本块和控制流图
+        auto blocks = buildBasicBlocks();
+        buildCFG(blocks);
+        
+        // 优化条件分支
+        for (auto& block : blocks) {
+            if (block->instructions.empty()) continue;
+            
+            auto lastInstr = block->instructions.back();
+            
+            // 优化条件分支指令
+            if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
+                // 如果条件是常量
+                if (ifGoto->condition->type == OperandType::CONSTANT) {
+                    if (ifGoto->condition->value != 0) {
+                        // 条件永远为真，替换为无条件跳转
+                        auto gotoInstr = std::make_shared<GotoInstr>(ifGoto->target);
+                        block->instructions.back() = gotoInstr;
+                        changed = true;
+                    } else {
+                        // 条件永远为假，删除跳转
+                        block->instructions.pop_back();
+                        changed = true;
+                    }
+                }
+            }
+            
+            // 优化无条件跳转到下一个块
+            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(lastInstr)) {
+                // 如果跳转目标就是下一个块，这是多余的
+                if (block->successors.size() == 1 && 
+                    !block->successors[0]->label.empty() && 
+                    block->successors[0]->label == gotoInstr->target->name) {
+                    
+                    // 检查这个目标块是否紧跟当前块
+                    bool isNextBlock = false;
+                    for (size_t i = 0; i < blocks.size() - 1; ++i) {
+                        if (blocks[i] == block && blocks[i+1] == block->successors[0]) {
+                            isNextBlock = true;
+                            break;
+                        }
+                    }
+                    
+                    if (isNextBlock) {
+                        // 删除多余的跳转
+                        block->instructions.pop_back();
+                        changed = true;
+                    }
+                }
+            }
+        }
+        
+        // 跳转链优化
+        for (auto& block : blocks) {
+            if (block->instructions.empty()) continue;
+            
+            auto lastInstr = block->instructions.back();
+            
+            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(lastInstr)) {
+                std::string targetLabel = gotoInstr->target->name;
+                
+                // 查找目标块
+                std::shared_ptr<BasicBlock> targetBlock = nullptr;
+                for (auto& b : blocks) {
+                    if (!b->label.empty() && b->label == targetLabel) {
+                        targetBlock = b;
+                        break;
+                    }
+                }
+                
+                // 如果目标块只包含一条无条件跳转指令
+                if (targetBlock && targetBlock->instructions.size() == 1) {
+                    auto targetFirstInstr = targetBlock->instructions[0];
+                    if (auto targetGoto = std::dynamic_pointer_cast<GotoInstr>(targetFirstInstr)) {
+                        // 跳转到跳转，直接跳到最终目标
+                        gotoInstr->target = targetGoto->target;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        
+        // 检查不可达代码
+        std::vector<bool> reachable(blocks.size(), false);
+        if (!blocks.empty()) {
+            reachable[0] = true; // 第一个块总是可达
+            
+            std::queue<int> workList;
+            workList.push(0);
+            
+            // 广度优先遍历标记可达块
+            while (!workList.empty()) {
+                int blockId = workList.front();
+                workList.pop();
+                
+                auto& block = blocks[blockId];
+                for (auto& succ : block->successors) {
+                    int succId = succ->id;
+                    if (!reachable[succId]) {
+                        reachable[succId] = true;
+                        workList.push(succId);
+                    }
+                }
+            }
+            
+            // 删除不可达块的指令
+            std::vector<int> unreachableBlocks;
+            for (size_t i = 0; i < blocks.size(); ++i) {
+                if (!reachable[i]) {
+                    unreachableBlocks.push_back(i);
+                    changed = true;
+                }
+            }
+            
+            // 从后往前删除不可达块
+            for (auto it = unreachableBlocks.rbegin(); it != unreachableBlocks.rend(); ++it) {
+                blocks.erase(blocks.begin() + *it);
+            }
+        }
+        
+        // 如果有改变，重建指令列表
+        if (changed) {
+            rebuildInstructionsFromBlocks(blocks);
+        }
+    }
+}
+
+/**
  * 检查指令是否是控制流指令。
  * 
  * 控制流指令改变执行流程，如跳转和返回。
@@ -2300,4 +2453,168 @@ bool IRAnalyzer::isFunctionUsed(const std::vector<std::shared_ptr<IRInstr>>& ins
 
 void IRGenerator::markFunctionAsUsed(const std::string& funcName) {
     usedFunctions.insert(funcName);
+}
+
+
+/**
+ * 公共子表达式消除优化。
+ * 
+ * 识别重复计算的表达式，使用先前计算的结果替代。
+ */
+void IRGenerator::commonSubexpressionElimination() {
+    // 构建基本块以进行局部CSE
+    auto blocks = buildBasicBlocks();
+    
+    // 对每个基本块进行局部CSE
+    for (auto& block : blocks) {
+        // 表达式哈希到结果变量的映射
+        std::map<std::string, std::shared_ptr<Operand>> exprMap;
+        
+        std::vector<std::shared_ptr<IRInstr>> newInstructions;
+        
+        for (auto& instr : block->instructions) {
+            // 标签和控制流指令总是保留
+            if (std::dynamic_pointer_cast<LabelInstr>(instr) ||
+                std::dynamic_pointer_cast<GotoInstr>(instr) ||
+                std::dynamic_pointer_cast<IfGotoInstr>(instr) ||
+                std::dynamic_pointer_cast<FunctionBeginInstr>(instr) ||
+                std::dynamic_pointer_cast<FunctionEndInstr>(instr) ||
+                std::dynamic_pointer_cast<ReturnInstr>(instr)) {
+                newInstructions.push_back(instr);
+                continue;
+            }
+            
+            // 处理二元运算指令
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                // 构建表达式的唯一标识符
+                std::string leftStr = binOp->left->toString();
+                std::string rightStr = binOp->right->toString();
+                std::string opStr = std::to_string(static_cast<int>(binOp->opcode));
+                
+                // 确保表达式标识符是一致的（操作数顺序无关）
+                std::string exprKey;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL || 
+                    binOp->opcode == OpCode::EQ || binOp->opcode == OpCode::NE) {
+                    // 对于满足交换律的操作，对操作数排序
+                    if (leftStr < rightStr) {
+                        exprKey = opStr + "_" + leftStr + "_" + rightStr;
+                    } else {
+                        exprKey = opStr + "_" + rightStr + "_" + leftStr;
+                    }
+                } else {
+                    // 对于不满足交换律的操作，保持原顺序
+                    exprKey = opStr + "_" + leftStr + "_" + rightStr;
+                }
+                
+                auto it = exprMap.find(exprKey);
+                if (it != exprMap.end()) {
+                    // 找到公共子表达式，用赋值替代计算
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        binOp->result, it->second);
+                    newInstructions.push_back(assignInstr);
+                } else {
+                    // 记录新表达式
+                    exprMap[exprKey] = binOp->result;
+                    newInstructions.push_back(instr);
+                }
+            }
+            // 处理一元运算指令
+            else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                std::string opStr = std::to_string(static_cast<int>(unaryOp->opcode));
+                std::string operandStr = unaryOp->operand->toString();
+                std::string exprKey = opStr + "_" + operandStr;
+                
+                auto it = exprMap.find(exprKey);
+                if (it != exprMap.end()) {
+                    auto assignInstr = std::make_shared<AssignInstr>(
+                        unaryOp->result, it->second);
+                    newInstructions.push_back(assignInstr);
+                } else {
+                    exprMap[exprKey] = unaryOp->result;
+                    newInstructions.push_back(instr);
+                }
+            }
+            // 处理赋值指令
+            else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                // 对于赋值指令，如果是直接变量拷贝，我们可以进行赋值传播
+                if (assignInstr->source->type == OperandType::VARIABLE || 
+                    assignInstr->source->type == OperandType::TEMP) {
+                    // 记录赋值关系
+                    std::string exprKey = "assign_" + assignInstr->source->toString();
+                    exprMap[exprKey] = assignInstr->target;
+                }
+                
+                // 赋值指令总是保留
+                newInstructions.push_back(instr);
+                
+                // 赋值可能会使现有表达式失效
+                // 我们应该移除包含被赋值变量的表达式
+                std::vector<std::string> keysToRemove;
+                for (const auto& pair : exprMap) {
+                    if (pair.first.find(assignInstr->target->toString()) != std::string::npos) {
+                        keysToRemove.push_back(pair.first);
+                    }
+                }
+                for (const auto& key : keysToRemove) {
+                    exprMap.erase(key);
+                }
+            }
+            // 处理调用指令
+            else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                // 函数调用可能有副作用，清空表达式映射
+                exprMap.clear();
+                newInstructions.push_back(instr);
+            }
+            // 其他指令直接保留
+            else {
+                newInstructions.push_back(instr);
+            }
+        }
+        
+        // 更新基本块的指令
+        block->instructions = newInstructions;
+    }
+    
+    // 重建指令列表
+    rebuildInstructionsFromBlocks(blocks);
+}
+
+/**
+ * 从基本块重建IR指令列表。
+ * 
+ * @param blocks 基本块列表
+ */
+void IRGenerator::rebuildInstructionsFromBlocks(const std::vector<std::shared_ptr<BasicBlock>>& blocks) {
+    std::vector<std::shared_ptr<IRInstr>> newInstructions;
+    
+    for (auto& block : blocks) {
+        for (auto& instr : block->instructions) {
+            newInstructions.push_back(instr);
+        }
+    }
+    
+    instructions = newInstructions;
+}
+
+/**
+ * 判断指令是否有副作用。
+ * 
+ * 有副作用的指令不能被移除，例如函数调用、IO操作等。
+ * 
+ * @param instr 要检查的指令
+ * @return 如果指令有副作用则为true
+ */
+bool IRGenerator::hasEffect(const std::shared_ptr<IRInstr>& instr) const {
+    // 函数调用、返回、跳转、标签等指令有副作用
+    if (std::dynamic_pointer_cast<CallInstr>(instr) ||
+        std::dynamic_pointer_cast<ReturnInstr>(instr) ||
+        std::dynamic_pointer_cast<GotoInstr>(instr) ||
+        std::dynamic_pointer_cast<IfGotoInstr>(instr) ||
+        std::dynamic_pointer_cast<LabelInstr>(instr) ||
+        std::dynamic_pointer_cast<FunctionBeginInstr>(instr) ||
+        std::dynamic_pointer_cast<FunctionEndInstr>(instr) ||
+        std::dynamic_pointer_cast<ParamInstr>(instr)) {
+        return true;
+    }
+    return false;
 }

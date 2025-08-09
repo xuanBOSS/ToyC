@@ -200,6 +200,13 @@ private:
 
     // 记录函数被使用
     void markFunctionAsUsed(const std::string& funcName);
+
+    // 公共子表达式消除优化
+    void commonSubexpressionElimination();
+    // 重建IR指令列表从基本块
+    void rebuildInstructionsFromBlocks(const std::vector<std::shared_ptr<BasicBlock>>& blocks);
+    // 判断指令是否有副作用
+    bool hasEffect(const std::shared_ptr<IRInstr>& instr) const;
 };
 
 // IR优化器接口
