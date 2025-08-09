@@ -472,7 +472,8 @@ private:
     void restoreCallerSavedRegs();   // 恢复调用者保存的寄存器
     void saveCalleeSavedRegs();      // 保存被调用者保存的寄存器
     void restoreCalleeSavedRegs();   // 恢复被调用者保存的寄存器
-    
+    void preAllocateLoopRegisters(); // 为常见循环变量预分配寄存器
+
     // 寄存器管理
     void initializeRegisters();      // 初始化寄存器信息
     void resetStackOffset();         // 初始化栈顶偏移
@@ -494,6 +495,8 @@ private:
     }
     int getLocalVarsSize() const { return localVarsSize; }
     void incrementLocalVarsSize(int size) { localVarsSize += size; }
+    bool isPowerOfTwo(int n);
+    int log2(int n);
     
     // 循环检测
     bool detectIntensiveLoops();                         // 检测是否包含循环密集代码
@@ -586,10 +589,14 @@ private:
         const std::vector<std::shared_ptr<IRInstr>>& instructions);
     
     std::vector<std::string> simplify(
-        std::map<std::string, std::set<std::string>>& graph);
+        std::map<std::string, std::set<std::string>>& graph,
+        const std::map<std::string, int>& spillCosts);
     
     std::map<std::string, std::string> color(
         const std::vector<std::string>& simplifiedOrder,
         const std::map<std::string, std::set<std::string>>& originalGraph,
         const std::vector<Register>& availableRegs);
+
+    std::map<std::string, int> calculateSpillCosts(
+        const std::vector<std::shared_ptr<IRInstr>>& instructions);
 };

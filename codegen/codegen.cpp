@@ -28,6 +28,15 @@ CodeGenerator::CodeGenerator(std::ostream& outputStream,
     initializeRegisters();
 
     std::cerr << "寄存器信息初始化完成\n";
+    // 初始化循环变量寄存器映射
+    loopVarToRegMap["i"] = "s1";
+    loopVarToRegMap["j"] = "s2";
+    loopVarToRegMap["k"] = "s3";
+    
+    // 添加常用的被调用者保存寄存器到使用集合
+    usedCalleeSavedRegs.insert("s1");
+    usedCalleeSavedRegs.insert("s2");
+    usedCalleeSavedRegs.insert("s3");
     std::cerr << "输出文件头\n";
 
     // 输出文件头
@@ -319,56 +328,224 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
         loadOperand(instr->left, leftReg);
         loadOperand(instr->right, rightReg);
 
-        // 根据操作码生成相应的指令
-        // 特殊情况优化 - 常量运算
-        if (instr->opcode == OpCode::ADD && 
-            instr->right->type == OperandType::CONSTANT) {
-            // 常量加法使用addi而不是add
-            emitInstruction("addi " + resultReg + ", " + leftReg + ", " + std::to_string(instr->right->value));
-        } else {
-        switch (instr->opcode) {
-            case OpCode::ADD:
+        // 指令模式匹配优化
+        if (instr->opcode == OpCode::ADD) {
+            // 针对常量操作数优化
+            if (instr->right->type == OperandType::CONSTANT) {
+                int value = instr->right->value;
+                if (value == 0) {
+                    // x + 0 = x
+                    emitInstruction("mv " + resultReg + ", " + leftReg);
+                } else if (value >= -2048 && value <= 2047) {
+                    // 小立即数使用addi
+                    emitInstruction("addi " + resultReg + ", " + leftReg + ", " + std::to_string(value));
+                } else {
+                    // 大立即数需要先加载到寄存器
+                    emitInstruction("li " + rightReg + ", " + std::to_string(value));
+                    emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else if (instr->left->type == OperandType::CONSTANT) {
+                int value = instr->left->value;
+                if (value == 0) {
+                    // 0 + x = x
+                    emitInstruction("mv " + resultReg + ", " + rightReg);
+                } else if (value >= -2048 && value <= 2047) {
+                    // 小立即数使用addi
+                    emitInstruction("addi " + resultReg + ", " + rightReg + ", " + std::to_string(value));
+                } else {
+                    // 大立即数需要先加载到寄存器
+                    emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else {
+                // 两个非常量操作数
                 emitInstruction("add " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::SUB:
+            }
+        } else if (instr->opcode == OpCode::SUB) {
+            // 针对常量操作数优化
+            if (instr->right->type == OperandType::CONSTANT) {
+                int value = instr->right->value;
+                if (value == 0) {
+                    // x - 0 = x
+                    emitInstruction("mv " + resultReg + ", " + leftReg);
+                } else if (-value >= -2048 && -value <= 2047) {
+                    // 如果负值在addi范围内，使用addi
+                    emitInstruction("addi " + resultReg + ", " + leftReg + ", " + std::to_string(-value));
+                } else {
+                    // 大立即数需要先加载到寄存器
+                    emitInstruction("sub " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else if (instr->left->type == OperandType::CONSTANT && instr->left->value == 0) {
+                // 0 - x = -x
+                emitInstruction("neg " + resultReg + ", " + rightReg);
+            } else {
+                // 两个非常量操作数
                 emitInstruction("sub " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::MUL:
+            }
+        } else if (instr->opcode == OpCode::MUL) {
+            // 乘法优化
+            if (instr->right->type == OperandType::CONSTANT) {
+                int value = instr->right->value;
+                if (value == 0) {
+                    // x * 0 = 0
+                    emitInstruction("mv " + resultReg + ", zero");
+                } else if (value == 1) {
+                    // x * 1 = x
+                    emitInstruction("mv " + resultReg + ", " + leftReg);
+                } else if (value == 2) {
+                    // x * 2 = x + x
+                    emitInstruction("add " + resultReg + ", " + leftReg + ", " + leftReg);
+                } else if (isPowerOfTwo(value)) {
+                    // x * 2^n = x << n
+                    int shift = log2(value);
+                    emitInstruction("slli " + resultReg + ", " + leftReg + ", " + std::to_string(shift));
+                } else {
+                    // 一般乘法
+                    emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else if (instr->left->type == OperandType::CONSTANT) {
+                // 交换操作数，左操作数为变量
+                int value = instr->left->value;
+                if (value == 0) {
+                    // 0 * x = 0
+                    emitInstruction("mv " + resultReg + ", zero");
+                } else if (value == 1) {
+                    // 1 * x = x
+                    emitInstruction("mv " + resultReg + ", " + rightReg);
+                } else if (value == 2) {
+                    // 2 * x = x + x
+                    emitInstruction("add " + resultReg + ", " + rightReg + ", " + rightReg);
+                } else if (isPowerOfTwo(value)) {
+                    // 2^n * x = x << n
+                    int shift = log2(value);
+                    emitInstruction("slli " + resultReg + ", " + rightReg + ", " + std::to_string(shift));
+                } else {
+                    // 一般乘法
+                    emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else {
+                // 两个非常量操作数
                 emitInstruction("mul " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::DIV:
+            }
+        } else if (instr->opcode == OpCode::DIV) {
+            // 除法优化
+            if (instr->right->type == OperandType::CONSTANT) {
+                int value = instr->right->value;
+                if (value == 1) {
+                    // x / 1 = x
+                    emitInstruction("mv " + resultReg + ", " + leftReg);
+                } else if (value == 2) {
+                    // 整数除以2可以用右移一位实现
+                    emitInstruction("srai " + resultReg + ", " + leftReg + ", 1");
+                } else if (isPowerOfTwo(value)) {
+                    // x / 2^n = x >> n (针对无符号除法)
+                    // 或者使用更复杂的带符号除法优化
+                    int shift = log2(value);
+                    emitInstruction("srai " + resultReg + ", " + leftReg + ", " + std::to_string(shift));
+                } else {
+                    // 一般除法
+                    emitInstruction("div " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else if (instr->left->type == OperandType::CONSTANT && instr->left->value == 0) {
+                // 0 / x = 0
+                emitInstruction("mv " + resultReg + ", zero");
+            } else {
+                // 两个非常量操作数
                 emitInstruction("div " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::MOD:
+            }
+        } else if (instr->opcode == OpCode::MOD) {
+            // 取模运算优化
+            if (instr->right->type == OperandType::CONSTANT) {
+                int value = instr->right->value;
+                if (isPowerOfTwo(value)) {
+                    // x % 2^n = x & (2^n - 1)
+                    int mask = value - 1;
+                    emitInstruction("andi " + resultReg + ", " + leftReg + ", " + std::to_string(mask));
+                } else {
+                    // 一般取模
+                    emitInstruction("rem " + resultReg + ", " + leftReg + ", " + rightReg);
+                }
+            } else {
+                // 两个非常量操作数
                 emitInstruction("rem " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::LT:
+            }
+        } else if (instr->opcode == OpCode::LT) {
+            // 小于比较优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x < 0 等价于检查符号位
+                emitInstruction("slt " + resultReg + ", " + leftReg + ", zero");
+            } else {
                 emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
-                break;
-            case OpCode::GT:
+            }
+        } else if (instr->opcode == OpCode::GT) {
+            // 大于比较优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x > 0 等价于 0 < x
+                emitInstruction("slt " + resultReg + ", zero, " + leftReg);
+            } else {
                 emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
-                break;
-            case OpCode::LE:
+            }
+        } else if (instr->opcode == OpCode::LE) {
+            // 小于等于优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x <= 0 等价于 !(0 < x)
+                emitInstruction("slt " + resultReg + ", zero, " + leftReg);
+                emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
+            } else {
+                // x <= y 等价于 !(y < x)
                 emitInstruction("slt " + resultReg + ", " + rightReg + ", " + leftReg);
                 emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-                break;
-            case OpCode::GE:
+            }
+        } else if (instr->opcode == OpCode::GE) {
+            // 大于等于优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x >= 0 等价于 !(x < 0)
+                emitInstruction("slt " + resultReg + ", " + leftReg + ", zero");
+                emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
+            } else {
+                // x >= y 等价于 !(x < y)
                 emitInstruction("slt " + resultReg + ", " + leftReg + ", " + rightReg);
                 emitInstruction("xori " + resultReg + ", " + resultReg + ", 1");
-                break;
-            case OpCode::EQ:
+            }
+        } else if (instr->opcode == OpCode::EQ) {
+            // 等于比较优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x == 0
+                emitInstruction("seqz " + resultReg + ", " + leftReg);
+            } else if (instr->left->type == OperandType::CONSTANT && instr->left->value == 0) {
+                // 0 == x
+                emitInstruction("seqz " + resultReg + ", " + rightReg);
+            } else {
+                // 使用异或和比较0实现相等比较
                 emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
                 emitInstruction("seqz " + resultReg + ", " + resultReg);
-                break;
-            case OpCode::NE:
+            }
+        } else if (instr->opcode == OpCode::NE) {
+            // 不等于比较优化
+            if (instr->right->type == OperandType::CONSTANT && instr->right->value == 0) {
+                // x != 0
+                emitInstruction("snez " + resultReg + ", " + leftReg);
+            } else if (instr->left->type == OperandType::CONSTANT && instr->left->value == 0) {
+                // 0 != x
+                emitInstruction("snez " + resultReg + ", " + rightReg);
+            } else {
+                // 使用异或实现不等比较
                 emitInstruction("xor " + resultReg + ", " + leftReg + ", " + rightReg);
                 emitInstruction("snez " + resultReg + ", " + resultReg);
-                break;
-            default:
-                std::cerr << "错误: 未知的二元操作" << std::endl;
-                break;
+            }
+        } else {
+            // 其他二元操作，使用默认实现
+            switch (instr->opcode) {
+                case OpCode::AND:
+                    emitInstruction("and " + resultReg + ", " + leftReg + ", " + rightReg);
+                    break;
+                case OpCode::OR:
+                    emitInstruction("or " + resultReg + ", " + leftReg + ", " + rightReg);
+                    break;
+                default:
+                    std::cerr << "错误: 未知的二元操作" << std::endl;
+                    break;
+            }
         }
-    }
 
         // 释放临时寄存器
         freeTempReg(rightReg);
@@ -381,7 +558,20 @@ void CodeGenerator::processBinaryOp(const std::shared_ptr<BinaryOpInstr>& instr)
     // 释放结果寄存器
     freeTempReg(resultReg);
 }
+// 辅助函数：检查一个数是否是2的幂
+bool CodeGenerator::isPowerOfTwo(int n) {
+    return n > 0 && (n & (n - 1)) == 0;
+}
 
+// 辅助函数：计算log2(n)，假设n是2的幂
+int CodeGenerator::log2(int n) {
+    int result = 0;
+    while (n > 1) {
+        n >>= 1;
+        result++;
+    }
+    return result;
+}
 // 处理一元操作指令
 // 为一元运算生成相应的RISC-V汇编代码
 void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
@@ -394,14 +584,29 @@ void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
     // 加载操作数
     loadOperand(instr->operand, operandReg);
     
-    // 根据操作码生成相应的指令
+    // 指令选择优化
     switch (instr->opcode) {
         case OpCode::NEG:
-            emitInstruction("neg " + resultReg + ", " + operandReg);
+            if (instr->operand->type == OperandType::CONSTANT) {
+                // 常量取负优化
+                emitInstruction("li " + resultReg + ", " + std::to_string(-instr->operand->value));
+            } else {
+                // 使用neg指令
+                emitInstruction("neg " + resultReg + ", " + operandReg);
+            }
             break;
+            
         case OpCode::NOT:
-            emitInstruction("seqz " + resultReg + ", " + operandReg);
+            if (instr->operand->type == OperandType::CONSTANT) {
+                // 常量逻辑非优化
+                bool value = (instr->operand->value != 0);
+                emitInstruction("li " + resultReg + ", " + std::to_string(!value));
+            } else {
+                // 使用seqz实现逻辑非
+                emitInstruction("seqz " + resultReg + ", " + operandReg);
+            }
             break;
+            
         default:
             std::cerr << "错误: 未知的一元操作" << std::endl;
             break;
@@ -420,17 +625,62 @@ void CodeGenerator::processUnaryOp(const std::shared_ptr<UnaryOpInstr>& instr) {
 void CodeGenerator::processAssign(const std::shared_ptr<AssignInstr>& instr) {
     emitComment(instr->toString());
     
-    // 获取临时寄存器
-    std::string reg = allocTempReg();
+    // 如果源和目标都分配了相同的寄存器，跳过
+    auto srcIt = regAlloc.find(instr->source->name);
+    auto dstIt = regAlloc.find(instr->target->name);
+    if (srcIt != regAlloc.end() && dstIt != regAlloc.end() && 
+        srcIt->second == dstIt->second) {
+        // 源和目标使用相同寄存器，无需生成指令
+        return;
+    }
     
-    // 加载源操作数
-    loadOperand(instr->source, reg);
-    
-    // 存储到目标操作数
-    storeRegister(reg, instr->target);
-    
-    // 释放临时寄存器
-    freeTempReg(reg);
+    // 针对源是常量的优化
+    if (instr->source->type == OperandType::CONSTANT) {
+        int value = instr->source->value;
+        
+        // 目标已分配寄存器
+        if (dstIt != regAlloc.end()) {
+            std::string dstReg = dstIt->second;
+            
+            // 优化常见常量的加载
+            if (value == 0) {
+                emitInstruction("mv " + dstReg + ", zero");
+            } else if (value >= -2048 && value <= 2047) {
+                emitInstruction("addi " + dstReg + ", zero, " + std::to_string(value));
+            } else {
+                emitInstruction("li " + dstReg + ", " + std::to_string(value));
+            }
+        } else {
+            // 目标在栈上，需要先加载到临时寄存器
+            std::string tempReg = allocTempReg();
+            
+            // 优化常见常量的加载
+            if (value == 0) {
+                emitInstruction("mv " + tempReg + ", zero");
+            } else if (value >= -2048 && value <= 2047) {
+                emitInstruction("addi " + tempReg + ", zero, " + std::to_string(value));
+            } else {
+                emitInstruction("li " + tempReg + ", " + std::to_string(value));
+            }
+            
+            // 存储到目标
+            storeRegister(tempReg, instr->target);
+            freeTempReg(tempReg);
+            return;
+        }
+    } else {
+        // 源不是常量，使用常规处理
+        std::string reg = allocTempReg();
+        
+        // 加载源操作数
+        loadOperand(instr->source, reg);
+        
+        // 存储到目标操作数
+        storeRegister(reg, instr->target);
+        
+        // 释放临时寄存器
+        freeTempReg(reg);
+    }
 }
 
 // 处理无条件跳转指令
@@ -447,6 +697,17 @@ void CodeGenerator::processGoto(const std::shared_ptr<GotoInstr>& instr) {
 void CodeGenerator::processIfGoto(const std::shared_ptr<IfGotoInstr>& instr) {
     emitComment(instr->toString());
     
+    // 针对常量条件优化
+    if (instr->condition->type == OperandType::CONSTANT) {
+        if (instr->condition->value != 0) {
+            // 条件为真，生成无条件跳转
+            emitInstruction("j " + instr->target->name);
+        } else {
+            // 条件为假，不生成跳转
+        }
+        return;
+    }
+
     // 获取临时寄存器
     std::string condReg = allocTempReg();
     
@@ -954,8 +1215,10 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
     if (op->type == OperandType::VARIABLE) {
         auto it = loopVarToRegMap.find(op->name);
         if (it != loopVarToRegMap.end()) {
-            // 使用专用循环寄存器
-            emitInstruction("mv " + reg + ", " + it->second);
+            // 如果目标寄存器与循环变量寄存器不同，使用mv指令
+            if (reg != it->second) {
+                emitInstruction("mv " + reg + ", " + it->second);
+            }
             return;
         }
     }
@@ -965,6 +1228,10 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
             // 针对特定常量进行优化 - 特别是0和1这些频繁出现的值
             if (op->value == 0) {
                 emitInstruction("mv " + reg + ", zero");
+            } else if (op->value == 1) {
+                emitInstruction("li " + reg + ", 1");
+            } else if (op->value == -1) {
+                emitInstruction("li " + reg + ", -1");
             } else if (op->value >= -2048 && op->value <= 2047) {
                 // 小立即数使用addi
                 emitInstruction("addi " + reg + ", zero, " + std::to_string(op->value));
@@ -1418,17 +1685,84 @@ int CodeGenerator::getRegisterStackOffset(const std::string& reg) {
 
 // 根据策略分配寄存器
 void CodeGenerator::allocateRegisters() {
+    // // 根据配置选择寄存器分配策略
+    // switch (config.regAllocStrategy) {
+    //     case RegisterAllocStrategy::LINEAR_SCAN:
+    //         linearScanRegisterAllocation();
+    //         break;
+    //     case RegisterAllocStrategy::GRAPH_COLOR:
+    //         graphColoringRegisterAllocation();
+    //         break;
+    //     default:
+    //         // 默认不做任何分配
+    //         break;
+    // }
+    std::vector<Register> allocatableRegs;
+    for (const auto& reg : registers) {
+        if (reg.isAllocatable && !reg.isReserved) {
+            allocatableRegs.push_back(reg);
+        }
+    }
+    
     // 根据配置选择寄存器分配策略
     switch (config.regAllocStrategy) {
-        case RegisterAllocStrategy::LINEAR_SCAN:
-            linearScanRegisterAllocation();
+        case RegisterAllocStrategy::LINEAR_SCAN: {
+            std::cerr << "使用线性扫描寄存器分配" << std::endl;
+            LinearScanRegisterAllocator allocator;
+            regAlloc = allocator.allocate(instructions, allocatableRegs);
             break;
-        case RegisterAllocStrategy::GRAPH_COLOR:
-            graphColoringRegisterAllocation();
+        }
+        case RegisterAllocStrategy::GRAPH_COLOR: {
+            std::cerr << "使用图着色寄存器分配" << std::endl;
+            GraphColoringRegisterAllocator allocator;
+            regAlloc = allocator.allocate(instructions, allocatableRegs);
             break;
-        default:
-            // 默认不做任何分配
+        }
+        default: {
+            std::cerr << "使用朴素寄存器分配" << std::endl;
+            NaiveRegisterAllocator allocator;
+            regAlloc = allocator.allocate(instructions, allocatableRegs);
             break;
+        }
+    }
+    
+    // 为重要的循环变量预分配寄存器
+    if (config.optimizeLoops) {
+        preAllocateLoopRegisters();
+    }
+}
+// 为常见循环变量预分配寄存器
+void CodeGenerator::preAllocateLoopRegisters() {
+    // 检测常见循环变量
+    std::set<std::string> loopVars;
+    for (const auto& instr : instructions) {
+        std::string instrStr = instr->toString();
+        // 识别循环变量定义和使用
+        if (instrStr.find(" i ") != std::string::npos || 
+            instrStr.find(" j ") != std::string::npos || 
+            instrStr.find(" k ") != std::string::npos) {
+            
+            auto defined = IRAnalyzer::getDefinedVariables(instr);
+            for (const auto& var : defined) {
+                if (var == "i" || var == "j" || var == "k") {
+                    loopVars.insert(var);
+                }
+            }
+        }
+    }
+    
+    // 为循环变量分配固定寄存器
+    if (loopVars.find("i") != loopVars.end()) {
+        regAlloc["i"] = "s1";
+        usedCalleeSavedRegs.insert("s1");
+    }
+    if (loopVars.find("j") != loopVars.end()) {
+        regAlloc["j"] = "s2";
+        usedCalleeSavedRegs.insert("s2");
+    }
+    if (loopVars.find("k") != loopVars.end()) {
+        regAlloc["k"] = "s3";
+        usedCalleeSavedRegs.insert("s3");
     }
 }
 
@@ -1687,7 +2021,32 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                             return true;
                         }
                     }
-                    // 处理其他分支指令...
+                    // 处理其他分支指令
+                    else if (branch.find("bne ") == 0) {
+                        std::string branchParts = branch.substr(4);
+                        size_t commaPos = branchParts.find(",");
+                        std::string reg1 = branchParts.substr(0, commaPos);
+                        reg1 = reg1.substr(reg1.find_first_not_of(" \t"));
+                        
+                        std::string rest = branchParts.substr(commaPos + 1);
+                        size_t nextCommaPos = rest.find(",");
+                        std::string reg2 = rest.substr(0, nextCommaPos);
+                        reg2 = reg2.substr(reg2.find_first_not_of(" \t"));
+                        
+                        std::string label = rest.substr(nextCommaPos + 1);
+                        label = label.substr(label.find_first_not_of(" \t"));
+                        
+                        // 如果比较的是加载的立即数
+                        if (reg2 == reg) {
+                            instrs.clear();
+                            instrs.push_back("bnez " + reg1 + ", " + label);
+                            return true;
+                        } else if (reg1 == reg) {
+                            instrs.clear();
+                            instrs.push_back("bnez " + reg2 + ", " + label);
+                            return true;
+                        }
+                    }
                 }
             }
             return false;
@@ -1711,8 +2070,65 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
             }
             return false;
         });
-//-----------------------修改性能loop------------------------
-        // 添加新的优化规则: 循环计数器预分配寄存器
+
+        // 模式4: 优化连续加载同一内存位置
+        addPeepholePattern("consecutive_loads", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 3) return false;
+            
+            std::string load1 = instrs[0];
+            std::string load2 = instrs[1];
+            
+            if (load1.find("lw ") == 0 && load2.find("lw ") == 0) {
+                std::string reg1 = load1.substr(3, load1.find(",") - 3);
+                std::string mem1 = load1.substr(load1.find(",") + 1);
+                
+                std::string reg2 = load2.substr(3, load2.find(",") - 3);
+                std::string mem2 = load2.substr(load2.find(",") + 1);
+                
+                // 如果两次加载相同位置但到不同寄存器
+                if (mem1 == mem2 && reg1 != reg2) {
+                    // 替换为加载+移动
+                    instrs.erase(instrs.begin() + 1);
+                    instrs.push_back("mv " + reg2 + ", " + reg1);
+                    return true;
+                }
+            }
+            return false;
+        });
+        
+        // 模式5: 优化加减零
+        addPeepholePattern("add_sub_zero", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 1) return false;
+            
+            std::string instr = instrs[0];
+            if (instr.find("addi ") == 0 || instr.find("subi ") == 0) {
+                size_t pos1 = instr.find(",");
+                size_t pos2 = instr.find(",", pos1 + 1);
+                
+                std::string dst = instr.substr(5, pos1 - 5);
+                std::string src = instr.substr(pos1 + 1, pos2 - pos1 - 1);
+                std::string imm = instr.substr(pos2 + 1);
+                
+                // 去除前导空格
+                src = src.substr(src.find_first_not_of(" \t"));
+                imm = imm.substr(imm.find_first_not_of(" \t"));
+                
+                // 如果立即数是0
+                if (imm == "0") {
+                    // 如果源和目标不同，替换为mv
+                    if (src != dst) {
+                        instrs[0] = "mv " + dst + ", " + src;
+                    } else {
+                        // 如果源和目标相同，删除指令
+                        instrs.clear();
+                    }
+                    return true;
+                }
+            }
+            return false;
+        });
+
+        // 模式6: 优化循环计数器处理
         addPeepholePattern("loop_counter_reg", [](std::vector<std::string>& instrs) -> bool {
             if (instrs.size() < 2) return false;
             
@@ -1739,7 +2155,7 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                     
                     instrs.clear();
                     if (instr1.find(", 0") != std::string::npos) {
-                        instrs.push_back("addi " + targetReg + ", zero, 0");
+                        instrs.push_back("mv " + targetReg + ", zero");
                     } else {
                         instrs.push_back("addi " + targetReg + ", zero, 1");
                     }
@@ -1749,7 +2165,7 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
             return false;
         });
         
-        // 添加新的优化规则: 合并连续加减
+        // 模式7: 合并连续加减
         addPeepholePattern("merge_addi", [](std::vector<std::string>& instrs) -> bool {
             if (instrs.size() < 2) return false;
             
@@ -1758,17 +2174,25 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
             
             if (instr1.find("addi ") == 0 && instr2.find("addi ") == 0) {
                 // 提取第一条指令的寄存器和立即数
-                std::string reg1 = instr1.substr(5, instr1.find(",") - 5);
-                std::string tmp = instr1.substr(instr1.find(",") + 1);
-                std::string src1 = tmp.substr(0, tmp.find(","));
-                std::string imm1Str = tmp.substr(tmp.find(",") + 1);
+                size_t pos1 = instr1.find(",");
+                size_t pos2 = instr1.find(",", pos1 + 1);
+                
+                std::string reg1 = instr1.substr(5, pos1 - 5);
+                std::string src1 = instr1.substr(pos1 + 1, pos2 - pos1 - 1);
+                src1 = src1.substr(src1.find_first_not_of(" \t"));
+                std::string imm1Str = instr1.substr(pos2 + 1);
+                imm1Str = imm1Str.substr(imm1Str.find_first_not_of(" \t"));
                 int imm1 = std::stoi(imm1Str);
                 
                 // 提取第二条指令的寄存器和立即数
-                std::string reg2 = instr2.substr(5, instr2.find(",") - 5);
-                tmp = instr2.substr(instr2.find(",") + 1);
-                std::string src2 = tmp.substr(0, tmp.find(","));
-                std::string imm2Str = tmp.substr(tmp.find(",") + 1);
+                pos1 = instr2.find(",");
+                pos2 = instr2.find(",", pos1 + 1);
+                
+                std::string reg2 = instr2.substr(5, pos1 - 5);
+                std::string src2 = instr2.substr(pos1 + 1, pos2 - pos1 - 1);
+                src2 = src2.substr(src2.find_first_not_of(" \t"));
+                std::string imm2Str = instr2.substr(pos2 + 1);
+                imm2Str = imm2Str.substr(imm2Str.find_first_not_of(" \t"));
                 int imm2 = std::stoi(imm2Str);
                 
                 // 如果目标寄存器相同，且第二条指令的源是第一条的目标
@@ -1778,8 +2202,9 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                     if (combinedImm == 0) {
                         // 两个立即数相互抵消
                         instrs.clear();
+                        instrs.push_back("mv " + reg1 + ", " + src1);
                         return true;
-                    } else {
+                    } else if (combinedImm >= -2048 && combinedImm <= 2047) {
                         instrs.clear();
                         instrs.push_back("addi " + reg1 + ", " + src1 + ", " + std::to_string(combinedImm));
                         return true;
@@ -1789,7 +2214,7 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
             return false;
         });
         
-        // 添加新的优化规则: 循环边界检查优化
+        // 模式8: 优化循环边界检查
         addPeepholePattern("loop_bound_check", [](std::vector<std::string>& instrs) -> bool {
             if (instrs.size() < 3) return false;
             
@@ -1810,14 +2235,14 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                     instr2.find("s2,") != std::string::npos || 
                     instr2.find("s3,") != std::string::npos) {
                     
-                    // 这是一个循环边界检查，可以保持不变或针对特定模式优化
-                    // 例如，在某些情况下，可以预计算循环次数
+                    // 直接返回false，保持指令不变但让调用者知道这是循环边界检查
                     return false;
                 }
             }
             return false;
         });
 
+        // 模式9: 优化循环归纳变量
         addPeepholePattern("loop_induction_var", [](std::vector<std::string>& instrs) -> bool {
             if (instrs.size() < 3) return false;
     
@@ -1834,9 +2259,13 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                 std::string loadReg = instr1.substr(3, instr1.find(",") - 3);
                 std::string loadAddr = instr1.substr(instr1.find(",") + 1);
         
-                std::string addDest = instr2.substr(5, instr2.find(",") - 5);
-                std::string addSrc = instr2.substr(instr2.find(",") + 1, instr2.find(",", instr2.find(",") + 1) - instr2.find(",") - 1);
-                std::string addImm = instr2.substr(instr2.rfind(",") + 1);
+                size_t pos1 = instr2.find(",");
+                size_t pos2 = instr2.find(",", pos1 + 1);
+                std::string addDest = instr2.substr(5, pos1 - 5);
+                std::string addSrc = instr2.substr(pos1 + 1, pos2 - pos1 - 1);
+                addSrc = addSrc.substr(addSrc.find_first_not_of(" \t"));
+                std::string addImm = instr2.substr(pos2 + 1);
+                addImm = addImm.substr(addImm.find_first_not_of(" \t"));
         
                 std::string storeReg = instr3.substr(3, instr3.find(",") - 3);
                 std::string storeAddr = instr3.substr(instr3.find(",") + 1);
@@ -1845,23 +2274,20 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                 if (loadAddr == storeAddr && 
                     loadReg == addSrc && 
                     addDest == storeReg && 
-                    addImm.find("1") != std::string::npos) {
+                    addImm == "1") {
             
-                    // 提取寄存器名
-                    std::string tempReg = loadReg;
-            
-                    // 更高效的版本
+                    // 优化为一条加载+自增+存储序列
                     instrs.clear();
-                    instrs.push_back("lw " + tempReg + ", " + loadAddr);
-                    instrs.push_back("addi " + tempReg + ", " + tempReg + ", 1");
-                    instrs.push_back("sw " + tempReg + ", " + storeAddr);
+                    instrs.push_back("lw " + loadReg + ", " + loadAddr);
+                    instrs.push_back("addi " + loadReg + ", " + loadReg + ", 1");
+                    instrs.push_back("sw " + loadReg + ", " + storeAddr);
                     return true;
                 }
             }
             return false;
         });
 
-        // 7. 针对矩阵操作的优化 - 添加新模式
+        // 模式10: 针对矩阵操作的优化
         addPeepholePattern("matrix_indexing", [](std::vector<std::string>& instrs) -> bool {
             if (instrs.size() < 4) return false;
     
@@ -1871,15 +2297,53 @@ void CodeGenerator::peepholeOptimize(std::vector<std::string>& instructions) {
                 instrs[2].find("add ") == 0 &&
                 instrs[3].find("lw ") == 0) {
         
-                // 这是矩阵访问模式，尝试优化地址计算
-                // 保持指令不变，但添加注释标记这是矩阵访问
-                return false; // 不修改指令，但添加注释标记
+                // 这是矩阵访问模式，但我们保持指令不变
+                // 在实际编译器中，可以使用更高效的寻址模式
+                return false;
             }
             return false;
         });
-//-----------------------修改性能loop------------------------
+
+        // 模式11: 消除嵌套循环中的冗余计算
+        addPeepholePattern("nested_loop_invariant", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 3) return false;
+            
+            // 检查是否有常见的循环不变量计算模式
+            // 例如，在内层循环中重复计算外层循环变量的表达式
+            
+            // 这是一个相对复杂的优化，需要理解嵌套循环结构
+            // 暂时返回false，在更完整的实现中可以添加此优化
+            return false;
+        });
+
+        // 模式12: 优化条件分支序列
+        addPeepholePattern("branch_sequence", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 2) return false;
+            
+            std::string instr1 = instrs[0];
+            std::string instr2 = instrs[1];
+            
+            // 检测 beqz/bnez 后跟无条件跳转的模式
+            if ((instr1.find("beqz ") == 0 || instr1.find("bnez ") == 0) && 
+                 instr2.find("j ") == 0) {
+                
+                // 这里可以优化条件分支链，但需要更深入的流程分析
+                // 暂时保持不变
+                return false;
+            }
+            return false;
+        });
+        
+        // 模式13: 优化函数返回序列
+        addPeepholePattern("return_sequence", [](std::vector<std::string>& instrs) -> bool {
+            if (instrs.size() < 3) return false;
+            
+            // 检查是否是常见的函数返回序列
+            // 例如，可能的冗余寄存器恢复
+            
+            return false;
+        });
     }
-    
 
     // 应用窥孔优化
     bool changed = true;
@@ -1982,6 +2446,80 @@ std::map<std::string, std::string> NaiveRegisterAllocator::allocate(
 
 // 线性扫描寄存器分配器实现
 std::map<std::string, std::string> LinearScanRegisterAllocator::allocate(
+    // const std::vector<std::shared_ptr<IRInstr>>& instructions,
+    // const std::vector<Register>& availableRegs) {
+    
+    // std::map<std::string, std::string> allocation;
+    
+    // // 计算变量的生命周期
+    // std::vector<LiveInterval> intervals = computeLiveIntervals(instructions);
+    
+    // // 按开始位置排序
+    // std::sort(intervals.begin(), intervals.end());
+    
+    // // 可用寄存器列表
+    // std::vector<std::string> freeRegs;
+    // for (const auto& reg : availableRegs) {
+    //     // 只使用被调用者保存的寄存器(s0-s11)进行全局分配
+    //     // 这样可以减少函数调用时的寄存器保存/恢复开销
+    //     if (reg.isCalleeSaved && reg.name != "fp" && reg.name != "s0") {
+    //         freeRegs.push_back(reg.name);
+    //     }
+    // }
+    
+    // // 当前活跃的区间及其分配的寄存器
+    // std::map<std::string, std::pair<LiveInterval, std::string>> active;
+    
+    // // 线性扫描算法
+    // for (const auto& interval : intervals) {
+    //     // 过期活跃区间
+    //     std::vector<std::string> expired;
+    //     for (auto& [var, pair] : active) {
+    //         if (pair.first.end < interval.start) {
+    //             freeRegs.push_back(pair.second); // 释放寄存器
+    //             expired.push_back(var);
+    //         }
+    //     }
+        
+    //     // 从活跃集合中移除过期区间
+    //     for (const auto& var : expired) {
+    //         active.erase(var);
+    //     }
+        
+    //     // 如果没有可用寄存器，需要溢出
+    //     if (freeRegs.empty()) {
+    //         // 找到最晚结束的活跃区间
+    //         std::string victimVar;
+    //         int latestEnd = -1;
+            
+    //         for (const auto& [var, pair] : active) {
+    //             if (pair.first.end > latestEnd) {
+    //                 latestEnd = pair.first.end;
+    //                 victimVar = var;
+    //             }
+    //         }
+            
+    //         // 如果当前区间比受害者结束更早，则溢出受害者
+    //         if (latestEnd > interval.end && !victimVar.empty()) {
+    //             allocation[interval.var] = active[victimVar].second;
+    //             freeRegs.push_back(active[victimVar].second);
+    //             active.erase(victimVar);
+                
+    //             // 将新区间加入活跃集合
+    //             active[interval.var] = {interval, allocation[interval.var]};
+    //         }
+    //         // 否则当前区间溢出（不分配寄存器）
+    //     } else {
+    //         // 有可用寄存器，分配一个
+    //         std::string reg = freeRegs.back();
+    //         freeRegs.pop_back();
+            
+    //         allocation[interval.var] = reg;
+    //         active[interval.var] = {interval, reg};
+    //     }
+    // }
+    
+    // return allocation;
     const std::vector<std::shared_ptr<IRInstr>>& instructions,
     const std::vector<Register>& availableRegs) {
     
@@ -1993,12 +2531,20 @@ std::map<std::string, std::string> LinearScanRegisterAllocator::allocate(
     // 按开始位置排序
     std::sort(intervals.begin(), intervals.end());
     
-    // 可用寄存器列表
+    // 创建可用寄存器列表，按优先级排序
     std::vector<std::string> freeRegs;
+    
+    // 先添加被调用者保存的寄存器(s0-s11)，减少函数调用开销
     for (const auto& reg : availableRegs) {
-        // 只使用被调用者保存的寄存器(s0-s11)进行全局分配
-        // 这样可以减少函数调用时的寄存器保存/恢复开销
-        if (reg.isCalleeSaved && reg.name != "fp" && reg.name != "s0") {
+        if (reg.isCalleeSaved && reg.isAllocatable && reg.name != "fp" && reg.name != "s0") {
+            freeRegs.push_back(reg.name);
+        }
+    }
+    
+    // 再添加调用者保存的寄存器(t0-t6)
+    for (const auto& reg : availableRegs) {
+        if (reg.isCallerSaved && reg.isAllocatable && 
+            reg.name != "ra" && reg.name.substr(0, 1) != "a") {
             freeRegs.push_back(reg.name);
         }
     }
@@ -2038,17 +2584,19 @@ std::map<std::string, std::string> LinearScanRegisterAllocator::allocate(
             // 如果当前区间比受害者结束更早，则溢出受害者
             if (latestEnd > interval.end && !victimVar.empty()) {
                 allocation[interval.var] = active[victimVar].second;
-                freeRegs.push_back(active[victimVar].second);
+                
+                // 从活跃集合中移除受害者
+                std::string freedReg = active[victimVar].second;
                 active.erase(victimVar);
                 
                 // 将新区间加入活跃集合
-                active[interval.var] = {interval, allocation[interval.var]};
+                active[interval.var] = {interval, freedReg};
             }
             // 否则当前区间溢出（不分配寄存器）
         } else {
-            // 有可用寄存器，分配一个
-            std::string reg = freeRegs.back();
-            freeRegs.pop_back();
+            // 有可用寄存器，分配最先可用的一个
+            std::string reg = freeRegs.front();
+            freeRegs.erase(freeRegs.begin());
             
             allocation[interval.var] = reg;
             active[interval.var] = {interval, reg};
@@ -2060,11 +2608,146 @@ std::map<std::string, std::string> LinearScanRegisterAllocator::allocate(
 
 // 计算变量的生命周期区间
 std::vector<LinearScanRegisterAllocator::LiveInterval> LinearScanRegisterAllocator::computeLiveIntervals(
+    // const std::vector<std::shared_ptr<IRInstr>>& instructions) {
+    
+    // std::map<std::string, LiveInterval> intervalMap;
+    
+    // // 扫描所有指令，计算变量的定义和使用位置
+    // for (int i = 0; i < instructions.size(); i++) {
+    //     auto instr = instructions[i];
+        
+    //     // 获取指令定义的变量
+    //     auto defined = IRAnalyzer::getDefinedVariables(instr);
+    //     for (const auto& var : defined) {
+    //         // 如果变量尚未有区间，创建一个新区间
+    //         if (intervalMap.find(var) == intervalMap.end()) {
+    //             intervalMap[var] = {var, i, i};
+    //         } 
+    //         // 否则更新开始位置（取最小值）
+    //         else {
+    //             intervalMap[var].start = std::min(intervalMap[var].start, i);
+    //         }
+    //     }
+        
+    //     // 获取指令使用的变量
+    //     auto used = IRAnalyzer::getUsedVariables(instr);
+    //     for (const auto& var : used) {
+    //         // 如果变量尚未有区间，创建一个新区间
+    //         if (intervalMap.find(var) == intervalMap.end()) {
+    //             intervalMap[var] = {var, i, i};
+    //         }
+    //         // 更新结束位置（取最大值）
+    //         intervalMap[var].end = std::max(intervalMap[var].end, i);
+    //     }
+    // }
+    
+    // // 转换为向量形式
+    // std::vector<LiveInterval> intervals;
+    // for (const auto& [var, interval] : intervalMap) {
+    //     intervals.push_back(interval);
+    // }
+    
+    // return intervals;
     const std::vector<std::shared_ptr<IRInstr>>& instructions) {
     
     std::map<std::string, LiveInterval> intervalMap;
     
-    // 扫描所有指令，计算变量的定义和使用位置
+    // 为每个基本块收集存活变量
+    std::vector<std::set<std::string>> liveOut(instructions.size());
+    
+    // 构建基本块和CFG
+    std::map<int, std::vector<int>> cfg;
+    std::map<int, std::vector<int>> reverseCfg;
+    
+    // 找到所有标签位置
+    std::map<std::string, int> labelToIndex;
+    for (int i = 0; i < instructions.size(); i++) {
+        if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(instructions[i])) {
+            labelToIndex[labelInstr->label] = i;
+        }
+    }
+    
+    // 构建CFG
+    for (int i = 0; i < instructions.size(); i++) {
+        // 默认下一条指令
+        if (i + 1 < instructions.size()) {
+            cfg[i].push_back(i + 1);
+            reverseCfg[i + 1].push_back(i);
+        }
+        
+        // 处理跳转
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instructions[i])) {
+            auto it = labelToIndex.find(gotoInstr->target->name);
+            if (it != labelToIndex.end()) {
+                cfg[i].push_back(it->second);
+                reverseCfg[it->second].push_back(i);
+                
+                // 无条件跳转移除默认下一条
+                if (!cfg[i].empty()) {
+                    cfg[i].pop_back();
+                    if (i + 1 < instructions.size()) {
+                        auto pos = std::find(reverseCfg[i + 1].begin(), 
+                                          reverseCfg[i + 1].end(), i);
+                        if (pos != reverseCfg[i + 1].end()) {
+                            reverseCfg[i + 1].erase(pos);
+                        }
+                    }
+                }
+            }
+        } else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instructions[i])) {
+            auto it = labelToIndex.find(ifGotoInstr->target->name);
+            if (it != labelToIndex.end()) {
+                cfg[i].push_back(it->second);
+                reverseCfg[it->second].push_back(i);
+            }
+        }
+    }
+    
+    // 使用迭代算法计算每个点的liveOut集合
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        
+        for (int i = instructions.size() - 1; i >= 0; i--) {
+            std::set<std::string> oldLiveOut = liveOut[i];
+            
+            // 收集所有后继的活跃变量
+            std::set<std::string> newLiveOut;
+            for (int succ : cfg[i]) {
+                if (succ < liveOut.size()) {
+                    std::set<std::string> liveInSucc = liveOut[succ];
+                    
+                    // 移除succ定义的变量
+                    auto defined = IRAnalyzer::getDefinedVariables(instructions[succ]);
+                    for (const auto& def : defined) {
+                        liveInSucc.erase(def);
+                    }
+                    
+                    // 添加succ使用的变量
+                    auto used = IRAnalyzer::getUsedVariables(instructions[succ]);
+                    for (const auto& use : used) {
+                        liveInSucc.insert(use);
+                    }
+                    
+                    // 合并到当前指令的liveOut
+                    newLiveOut.insert(liveInSucc.begin(), liveInSucc.end());
+                }
+                
+                // 合并后继的liveOut
+                if (succ < liveOut.size()) {
+                    newLiveOut.insert(liveOut[succ].begin(), liveOut[succ].end());
+                }
+            }
+            
+            // 更新liveOut
+            if (newLiveOut != oldLiveOut) {
+                liveOut[i] = newLiveOut;
+                changed = true;
+            }
+        }
+    }
+    
+    // 使用liveOut信息计算变量的活跃区间
     for (int i = 0; i < instructions.size(); i++) {
         auto instr = instructions[i];
         
@@ -2074,9 +2757,8 @@ std::vector<LinearScanRegisterAllocator::LiveInterval> LinearScanRegisterAllocat
             // 如果变量尚未有区间，创建一个新区间
             if (intervalMap.find(var) == intervalMap.end()) {
                 intervalMap[var] = {var, i, i};
-            } 
-            // 否则更新开始位置（取最小值）
-            else {
+            } else {
+                // 更新定义位置（取最小值）
                 intervalMap[var].start = std::min(intervalMap[var].start, i);
             }
         }
@@ -2091,6 +2773,13 @@ std::vector<LinearScanRegisterAllocator::LiveInterval> LinearScanRegisterAllocat
             // 更新结束位置（取最大值）
             intervalMap[var].end = std::max(intervalMap[var].end, i);
         }
+        
+        // 使用liveOut信息延长变量的生命周期
+        for (const auto& var : liveOut[i]) {
+            if (intervalMap.find(var) != intervalMap.end()) {
+                intervalMap[var].end = std::max(intervalMap[var].end, i);
+            }
+        }
     }
     
     // 转换为向量形式
@@ -2104,6 +2793,26 @@ std::vector<LinearScanRegisterAllocator::LiveInterval> LinearScanRegisterAllocat
 
 // 图着色寄存器分配器实现
 std::map<std::string, std::string> GraphColoringRegisterAllocator::allocate(
+    // const std::vector<std::shared_ptr<IRInstr>>& instructions,
+    // const std::vector<Register>& availableRegs) {
+    
+    // std::map<std::string, std::string> allocation;
+    
+    // // 构建冲突图
+    // auto interferenceGraph = buildInterferenceGraph(instructions);
+    
+    // // 如果图为空，直接返回空分配
+    // if (interferenceGraph.empty()) {
+    //     return allocation;
+    // }
+    
+    // // 简化冲突图，获取简化后的变量顺序
+    // auto simplifiedOrder = simplify(interferenceGraph);
+    
+    // // 根据简化顺序为变量分配寄存器
+    // allocation = color(simplifiedOrder, interferenceGraph, availableRegs);
+    
+    // return allocation;
     const std::vector<std::shared_ptr<IRInstr>>& instructions,
     const std::vector<Register>& availableRegs) {
     
@@ -2117,13 +2826,50 @@ std::map<std::string, std::string> GraphColoringRegisterAllocator::allocate(
         return allocation;
     }
     
+    // 计算每个变量的溢出代价（使用频率）
+    std::map<std::string, int> spillCosts = calculateSpillCosts(instructions);
+    
     // 简化冲突图，获取简化后的变量顺序
-    auto simplifiedOrder = simplify(interferenceGraph);
+    auto simplifiedOrder = simplify(interferenceGraph, spillCosts);
     
     // 根据简化顺序为变量分配寄存器
     allocation = color(simplifiedOrder, interferenceGraph, availableRegs);
     
     return allocation;
+}
+
+// 计算变量的溢出代价
+std::map<std::string, int> GraphColoringRegisterAllocator::calculateSpillCosts(
+    const std::vector<std::shared_ptr<IRInstr>>& instructions) {
+    
+    std::map<std::string, int> spillCosts;
+    
+    // 基于变量使用频率计算溢出代价
+    for (const auto& instr : instructions) {
+        // 使用变量增加代价
+        auto used = IRAnalyzer::getUsedVariables(instr);
+        for (const auto& var : used) {
+            spillCosts[var] += 1;
+            
+            // 循环内使用的变量溢出代价更高
+            if (instr->toString().find("loop") != std::string::npos) {
+                spillCosts[var] += 5;
+            }
+        }
+        
+        // 定义变量增加代价
+        auto defined = IRAnalyzer::getDefinedVariables(instr);
+        for (const auto& var : defined) {
+            spillCosts[var] += 1;
+            
+            // 循环内定义的变量溢出代价更高
+            if (instr->toString().find("loop") != std::string::npos) {
+                spillCosts[var] += 5;
+            }
+        }
+    }
+    
+    return spillCosts;
 }
 
 // 构建变量冲突图
@@ -2189,18 +2935,67 @@ std::map<std::string, std::set<std::string>> GraphColoringRegisterAllocator::bui
 
 // 简化冲突图
 std::vector<std::string> GraphColoringRegisterAllocator::simplify(
-    std::map<std::string, std::set<std::string>>& graph) {
+    // std::map<std::string, std::set<std::string>>& graph) {
+    
+    // std::vector<std::string> simplifiedOrder;
+    
+    // // 创建图的副本，因为我们会修改它
+    // auto workGraph = graph;
+    
+    // // 当图不为空时，继续简化
+    // while (!workGraph.empty()) {
+    //     // 查找度数小于可用寄存器数量的节点
+    //     std::string nodeToRemove;
+    //     int minDegree = std::numeric_limits<int>::max();
+        
+    //     for (const auto& [node, neighbors] : workGraph) {
+    //         if (neighbors.size() < minDegree) {
+    //             minDegree = neighbors.size();
+    //             nodeToRemove = node;
+    //         }
+    //     }
+        
+    //     // 如果找不到合适的节点，我们需要选择一个"溢出"节点
+    //     // 这里简单地选择度数最大的节点作为溢出候选
+    //     if (nodeToRemove.empty()) {
+    //         int maxDegree = -1;
+    //         for (const auto& [node, neighbors] : workGraph) {
+    //             if (neighbors.size() > maxDegree) {
+    //                 maxDegree = neighbors.size();
+    //                 nodeToRemove = node;
+    //             }
+    //         }
+    //     }
+        
+    //     // 从图中移除该节点
+    //     for (auto& [_, neighbors] : workGraph) {
+    //         neighbors.erase(nodeToRemove);
+    //     }
+    //     workGraph.erase(nodeToRemove);
+        
+    //     // 将节点添加到简化序列
+    //     simplifiedOrder.push_back(nodeToRemove);
+    // }
+    
+    // // 逆序返回，这样我们可以从最后一个移除的节点开始着色
+    // std::reverse(simplifiedOrder.begin(), simplifiedOrder.end());
+    // return simplifiedOrder;
+    std::map<std::string, std::set<std::string>>& graph,
+    const std::map<std::string, int>& spillCosts) {
     
     std::vector<std::string> simplifiedOrder;
     
     // 创建图的副本，因为我们会修改它
     auto workGraph = graph;
     
+    // 寄存器数量（估计值，实际会根据可用寄存器数量调整）
+    const int K = 10; 
+    
     // 当图不为空时，继续简化
     while (!workGraph.empty()) {
-        // 查找度数小于可用寄存器数量的节点
+        // 查找度数小于K的节点，优先选择度数最小的
         std::string nodeToRemove;
-        int minDegree = std::numeric_limits<int>::max();
+        int minDegree = K;
         
         for (const auto& [node, neighbors] : workGraph) {
             if (neighbors.size() < minDegree) {
@@ -2209,13 +3004,23 @@ std::vector<std::string> GraphColoringRegisterAllocator::simplify(
             }
         }
         
-        // 如果找不到合适的节点，我们需要选择一个"溢出"节点
-        // 这里简单地选择度数最大的节点作为溢出候选
+        // 如果找不到度数小于K的节点，选择一个溢出节点
         if (nodeToRemove.empty()) {
-            int maxDegree = -1;
+            // 选择溢出代价/度数最小的节点
+            double minRatio = std::numeric_limits<double>::max();
+            
             for (const auto& [node, neighbors] : workGraph) {
-                if (neighbors.size() > maxDegree) {
-                    maxDegree = neighbors.size();
+                // 获取变量的溢出代价
+                int cost = 1;  // 默认代价
+                auto costIt = spillCosts.find(node);
+                if (costIt != spillCosts.end()) {
+                    cost = costIt->second;
+                }
+                
+                // 计算代价/度数比率
+                double ratio = static_cast<double>(cost) / (neighbors.size() + 1);
+                if (ratio < minRatio) {
+                    minRatio = ratio;
                     nodeToRemove = node;
                 }
             }
@@ -2238,16 +3043,74 @@ std::vector<std::string> GraphColoringRegisterAllocator::simplify(
 
 // 图着色算法 - 为变量分配寄存器
 std::map<std::string, std::string> GraphColoringRegisterAllocator::color(
+    // const std::vector<std::string>& simplifiedOrder,
+    // const std::map<std::string, std::set<std::string>>& originalGraph,
+    // const std::vector<Register>& availableRegs) {
+    
+    // std::map<std::string, std::string> allocation;
+    
+    // // 筛选可分配的寄存器
+    // std::vector<std::string> regNames;
+    // for (const auto& reg : availableRegs) {
+    //     if (reg.isAllocatable && !reg.isReserved) {
+    //         regNames.push_back(reg.name);
+    //     }
+    // }
+    
+    // // 按照简化顺序为变量分配颜色（寄存器）
+    // for (const auto& var : simplifiedOrder) {
+    //     // 获取变量的邻居
+    //     auto it = originalGraph.find(var);
+    //     if (it == originalGraph.end()) continue;
+        
+    //     const auto& neighbors = it->second;
+        
+    //     // 收集邻居已使用的颜色
+    //     std::set<std::string> usedColors;
+    //     for (const auto& neighbor : neighbors) {
+    //         auto allocIt = allocation.find(neighbor);
+    //         if (allocIt != allocation.end()) {
+    //             usedColors.insert(allocIt->second);
+    //         }
+    //     }
+        
+    //     // 查找可用的颜色
+    //     std::string selectedReg;
+    //     for (const auto& reg : regNames) {
+    //         if (usedColors.find(reg) == usedColors.end()) {
+    //             selectedReg = reg;
+    //             break;
+    //         }
+    //     }
+        
+    //     // 如果找到可用寄存器，进行分配
+    //     if (!selectedReg.empty()) {
+    //         allocation[var] = selectedReg;
+    //     }
+    //     // 否则，变量需要溢出到内存（不分配寄存器）
+    // }
+    
+    // return allocation;
     const std::vector<std::string>& simplifiedOrder,
     const std::map<std::string, std::set<std::string>>& originalGraph,
     const std::vector<Register>& availableRegs) {
     
     std::map<std::string, std::string> allocation;
     
-    // 筛选可分配的寄存器
+    // 筛选可分配的寄存器，按优先级排序
     std::vector<std::string> regNames;
+    
+    // 先添加被调用者保存的寄存器
     for (const auto& reg : availableRegs) {
-        if (reg.isAllocatable && !reg.isReserved) {
+        if (reg.isCalleeSaved && reg.isAllocatable && reg.name != "fp" && reg.name != "s0") {
+            regNames.push_back(reg.name);
+        }
+    }
+    
+    // 再添加调用者保存的寄存器
+    for (const auto& reg : availableRegs) {
+        if (reg.isCallerSaved && reg.isAllocatable && 
+            reg.name != "ra" && reg.name.substr(0, 1) != "a") {
             regNames.push_back(reg.name);
         }
     }
