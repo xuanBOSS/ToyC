@@ -1464,7 +1464,7 @@ void IRGenerator::constantPropagationCFG() {
  * 3. 标记活跃指令（有副作用或定义活跃变量的指令）
  * 4. 过滤掉非活跃指令
  */
-void IRGenerator::deadCodeElimination() {
+/*void IRGenerator::deadCodeElimination() {
     // 存储活跃变量集合（会被使用的变量）
     std::unordered_set<std::string> usedVars;
 
@@ -1541,7 +1541,96 @@ void IRGenerator::deadCodeElimination() {
         }
     }
     instructions = std::move(newInstructions);
+}*/
+void IRGenerator::deadCodeElimination() {
+    //构建 basic blocks 与 CFG
+    auto basicBlocks = buildBasicBlocks();
+    buildCFG(basicBlocks);
+
+    // Step 1: 收集 use / def
+    std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> use, def;
+    for (auto& block : basicBlocks) {
+        for (auto& instr : block->instructions) {
+            auto defs = IRAnalyzer::getDefinedVariables(instr);
+            auto uses = IRAnalyzer::getUsedVariables(instr);
+
+            for (auto& u : uses) {
+                if (def[block].find(u) == def[block].end()) {
+                    use[block].insert(u);
+                }
+            }
+            for (auto& d : defs) {
+                def[block].insert(d);
+            }
+        }
+    }
+
+    // Step 2: 初始化 live_in / live_out
+    std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
+
+    bool changed;
+    do {
+        changed = false;
+        // 反向遍历所有基本块（顺序无所谓，只要反复迭代到收敛）
+        for (auto& block : basicBlocks) {
+            // live_out = 后继的 live_in 并集
+            std::unordered_set<std::string> new_live_out;
+            for (auto succ : block->successors) {
+                new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+            }
+
+            // live_in = use ∪ (live_out - def)
+            std::unordered_set<std::string> new_live_in = use[block];
+            for (auto& var : new_live_out) {
+                if (def[block].find(var) == def[block].end()) {
+                    new_live_in.insert(var);
+                }
+            }
+
+            if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
+                live_in[block] = std::move(new_live_in);
+                live_out[block] = std::move(new_live_out);
+                changed = true;
+            }
+        }
+    } while (changed);
+
+    // Step 3: 反向删除死代码
+    for (auto& block : basicBlocks) {
+        auto live = live_out[block]; // 从 live_out 开始反向扫描
+        for (auto it = block->instructions.rbegin(); it != block->instructions.rend(); ) {
+            auto defs = IRAnalyzer::getDefinedVariables(*it);
+            auto uses = IRAnalyzer::getUsedVariables(*it);
+
+            bool hasSideEffect = isSideEffectInstr(*it);
+
+            bool isLive = false;
+            for (auto& d : defs) {
+                if (live.find(d) != live.end()) {
+                    isLive = true;
+                    break;
+                }
+            }
+
+            if (!isLive && !hasSideEffect && !defs.empty()) {
+                // 删除死代码
+                it = decltype(it){ block->instructions.erase(std::next(it).base()) };
+                continue;
+            }
+
+            // 更新 live 集合
+            for (auto& d : defs) {
+                live.erase(d);
+            }
+            for (auto& u : uses) {
+                live.insert(u);
+            }
+
+            ++it;
+        }
+    }
 }
+
 
 /**
  * 判断指令是否具有副作用
@@ -2447,11 +2536,6 @@ std::vector<std::string> IRAnalyzer::getDefinedVariables(const std::shared_ptr<I
     else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
         if (callInstr->result) {
             definedVars.push_back(callInstr->result->name);
-        }
-    }
-    else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
-        if (paramInstr->param) {
-            definedVars.push_back(paramInstr->param->name);
         }
     }
     
