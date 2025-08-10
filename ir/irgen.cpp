@@ -413,7 +413,7 @@ void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
-    //deadCodeElimination();    // 删除无效果的代码
+    deadCodeElimination();    // 删除无效果的代码
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
@@ -1402,7 +1402,7 @@ void IRGenerator::constantPropagationCFG() {
  * 删除对程序输出没有影响的指令。
  * 例如，对从未使用的变量的赋值。
  */
-void IRGenerator::deadCodeElimination() {
+/*void IRGenerator::deadCodeElimination() {
     // 首先，识别使用的变量
     std::unordered_set<std::string> usedVars;
     
@@ -1454,7 +1454,115 @@ void IRGenerator::deadCodeElimination() {
     }
     
     instructions = newInstructions;
+}*/
+
+/**
+ * 执行死代码消除优化
+ * 算法步骤：
+ * 1. 标记所有具有副作用的指令使用的变量（种子）
+ * 2. 迭代传播活跃变量（从被使用的变量反向传播到定义它们的变量）
+ * 3. 标记活跃指令（有副作用或定义活跃变量的指令）
+ * 4. 过滤掉非活跃指令
+ */
+void IRGenerator::deadCodeElimination() {
+    // 存储活跃变量集合（会被使用的变量）
+    std::unordered_set<std::string> usedVars;
+
+    // 1. 标记初始活跃变量（从副作用指令开始）
+    for (const auto& instr : instructions) {
+        // 检查是否是副作用指令（如函数调用、跳转等）
+        if (isSideEffectInstr(instr)) {
+            auto usedInInstr = IRAnalyzer::getUsedVariables(instr);
+            // 将这些变量加入活跃集合
+            for (const auto& v : usedInInstr) {
+                usedVars.insert(v);
+            }
+        }
+    }
+
+    // 2. 反复迭代传播活跃变量
+    bool changed = true;
+    while (changed) {
+        changed = false;
+
+        // 遍历所有指令
+        for (const auto& instr : instructions) {
+            // 获取当前指令定义的变量
+            auto definedVars = IRAnalyzer::getDefinedVariables(instr);
+
+            // 判断该指令是否定义了活跃变量
+            bool defIsUsed = false;
+            for (const auto& dvar : definedVars) {
+                if (usedVars.count(dvar) > 0) {
+                    defIsUsed = true;
+                    break;
+                }
+            }
+
+            // 如果定义的变量活跃，则将该指令用到的变量加入活跃集合
+            if (defIsUsed) {
+                auto usedInInstr = IRAnalyzer::getUsedVariables(instr);
+                for (const auto& v : usedInInstr) {
+                    // 如果变量是新加入的，标记需要继续迭代
+                    if (usedVars.insert(v).second) {
+                        changed = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. 标记活跃指令（副作用指令或定义活跃变量的指令）
+    std::vector<bool> isLive(instructions.size(), false);
+    for (size_t i = 0; i < instructions.size(); ++i) {
+        const auto& instr = instructions[i];
+
+        // 副作用指令总是活跃的
+        if (isSideEffectInstr(instr)) {
+            isLive[i] = true;
+        } else {
+            // 检查是否定义了活跃变量
+            auto definedVars = IRAnalyzer::getDefinedVariables(instr);
+            for (const auto& dvar : definedVars) {
+                if (usedVars.count(dvar) > 0) {
+                    isLive[i] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // 4. 只保留活跃指令
+    std::vector<std::shared_ptr<IRInstr>> newInstructions;
+    newInstructions.reserve(instructions.size());
+    for (size_t i = 0; i < instructions.size(); ++i) {
+        if (isLive[i]) {
+            newInstructions.push_back(instructions[i]);
+        }
+    }
+    instructions = std::move(newInstructions);
 }
+
+/**
+ * 判断指令是否具有副作用
+ * 有副作用的指令包括：
+ * - 函数调用（可能修改外部状态）
+ * - 控制流指令（跳转、返回等）
+ * - 标签和函数边界指令
+ * - 参数传递指令
+ */
+bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
+    return
+        std::dynamic_pointer_cast<CallInstr>(instr) != nullptr ||               // 函数调用
+        std::dynamic_pointer_cast<ReturnInstr>(instr) != nullptr ||             // 返回指令
+        std::dynamic_pointer_cast<GotoInstr>(instr) != nullptr ||               // 无条件跳转
+        std::dynamic_pointer_cast<IfGotoInstr>(instr) != nullptr ||             // 条件跳转
+        std::dynamic_pointer_cast<LabelInstr>(instr) != nullptr ||              // 标签
+        std::dynamic_pointer_cast<FunctionBeginInstr>(instr) != nullptr ||      // 函数开始
+        std::dynamic_pointer_cast<FunctionEndInstr>(instr) != nullptr ||        // 函数结束
+        std::dynamic_pointer_cast<ParamInstr>(instr) != nullptr;                // 参数传递
+}
+
 
 /**
  * 控制流优化。

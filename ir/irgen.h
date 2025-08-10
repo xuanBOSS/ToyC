@@ -147,6 +147,9 @@ private:
     void deadCodeElimination();    // 死代码删除
     void controlFlowOptimization();// 控制流优化
 
+    // 判断指令是否具有副作用
+    bool isSideEffectInstr(const std::shared_ptr<IRInstr>& instr);
+
     // 递归解析常量表达式，depth 避免循环引用
     std::shared_ptr<Operand> resolveConstant(
         const std::string& name,
