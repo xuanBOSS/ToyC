@@ -174,7 +174,7 @@ private:
     };
 
     // 生成常量操作数
-    std::shared_ptr<Operand> makeConstantOperand(int v);
+    std::shared_ptr<Operand> makeConstantOperand(int v,std::string name);
 
     // 构建基本快
     std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();

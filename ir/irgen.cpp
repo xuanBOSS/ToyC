@@ -995,8 +995,8 @@ static bool tryEvalBinaryOp(const std::shared_ptr<BinaryOpInstr>& binOp, int lva
 }
 
 // 生成常量操作数
-std::shared_ptr<Operand> IRGenerator::makeConstantOperand(int v) {
-    auto op = std::make_shared<Operand>(OperandType::CONSTANT, "const");    // 常量可以没有 name
+std::shared_ptr<Operand> IRGenerator::makeConstantOperand(int v, std::string name) {
+    auto op = std::make_shared<Operand>(OperandType::CONSTANT, name);    
     op->value = v;
     return op;
 }
@@ -1314,55 +1314,75 @@ void IRGenerator::constantPropagationCFG() {
 
     // 6. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
     for (int bid = 0; bid < n; ++bid) {
+
+        // 获取当前块的常量环境（inMap）和基本块对象
         ConstMap env = inMap[bid];
         auto blk = blocks[bid];
+
+        // 遍历块中的每条指令
         for (auto& instr : blk->instructions) {
+            // 处理赋值指令
             if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                // 检查源操作数是否为变量/临时变量
                 if (assignInstr->source->type == OperandType::VARIABLE || assignInstr->source->type == OperandType::TEMP) {
+                    // 在环境查找变量状态
                     auto it = env.find(assignInstr->source->name);
+                    // 如果是常量则替换为常量操作数
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        assignInstr->source = makeConstantOperand(it->second.constantValue);
+                        assignInstr->source = makeConstantOperand(it->second.constantValue, assignInstr->source->name);
                     }
                 }
-            } else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+            } 
+            // 处理二元运算指令
+            else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                // 检查左操作数
                 if (binOp->left->type == OperandType::VARIABLE || binOp->left->type == OperandType::TEMP) {
                     auto it = env.find(binOp->left->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        binOp->left = makeConstantOperand(it->second.constantValue);
+                        binOp->left = makeConstantOperand(it->second.constantValue, binOp->left->name);
                     }
                 }
+                // 检查右操作数
                 if (binOp->right->type == OperandType::VARIABLE || binOp->right->type == OperandType::TEMP) {
                     auto it = env.find(binOp->right->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        binOp->right = makeConstantOperand(it->second.constantValue);
+                        binOp->right = makeConstantOperand(it->second.constantValue, binOp->right->name);
                     }
                 }
-            } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+            } 
+            // 处理一元运算指令
+            else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
                 if (unaryOp->operand->type == OperandType::VARIABLE || unaryOp->operand->type == OperandType::TEMP) {
                     auto it = env.find(unaryOp->operand->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        unaryOp->operand = makeConstantOperand(it->second.constantValue);
+                        unaryOp->operand = makeConstantOperand(it->second.constantValue, unaryOp->operand->name);
                     }
                 }
-            } else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
+            } 
+            // 处理参数传递指令
+            else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
                 if (paramInstr->param->type == OperandType::VARIABLE || paramInstr->param->type == OperandType::TEMP) {
                     auto it = env.find(paramInstr->param->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        paramInstr->param = makeConstantOperand(it->second.constantValue);
+                        paramInstr->param = makeConstantOperand(it->second.constantValue, paramInstr->param->name);
                     }
                 }
-            } else if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
+            } 
+            // 处理返回指令
+            else if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
                 if (returnInstr->value && (returnInstr->value->type == OperandType::VARIABLE || returnInstr->value->type == OperandType::TEMP)) {
                     auto it = env.find(returnInstr->value->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        returnInstr->value = makeConstantOperand(it->second.constantValue);
+                        returnInstr->value = makeConstantOperand(it->second.constantValue, returnInstr->value->name);
                     }
                 }
-            } else if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+            } 
+            // 处理条件跳转指令
+            else if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
                 if (ifg->condition->type == OperandType::VARIABLE || ifg->condition->type == OperandType::TEMP) {
                     auto it = env.find(ifg->condition->name);
                     if (it != env.end() && it->second.kind == LatticeKind::Constant) {
-                        ifg->condition = makeConstantOperand(it->second.constantValue);
+                        ifg->condition = makeConstantOperand(it->second.constantValue, ifg->condition->name);
                     }
                 }
             }
