@@ -1252,7 +1252,7 @@ void IRGenerator::constantPropagationCFG() {
     // 假定 blocks[0] 是入口（如果函数有多入口或特殊结构需修改）
     q.push(0);
 
-    while (!q.empty()) {
+    /*while (!q.empty()) {
         int bid = q.front(); q.pop();
         auto blk = blocks[bid];
 
@@ -1296,7 +1296,7 @@ void IRGenerator::constantPropagationCFG() {
             outMap[bid] = outEnv;
             for (auto& succ : blk->successors) q.push(succ->id);
         }
-    }
+    }*/
 
     // 6. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
     for (int bid = 0; bid < n; ++bid) {
