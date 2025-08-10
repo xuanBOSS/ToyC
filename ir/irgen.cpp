@@ -2449,6 +2449,11 @@ std::vector<std::string> IRAnalyzer::getDefinedVariables(const std::shared_ptr<I
             definedVars.push_back(callInstr->result->name);
         }
     }
+    else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
+        if (paramInstr->param) {
+            definedVars.push_back(paramInstr->param->name);
+        }
+    }
     
     return definedVars;
 }
