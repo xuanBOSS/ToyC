@@ -741,7 +741,6 @@ std::vector<std::pair<BlockID, BlockID>> findBackEdges(
         for (auto succ : cfg.at(b)) {
             // 情况1：后继块在DFS栈中 -> 发现回边
             if (std::find(stack.begin(), stack.end(), succ) != stack.end()) {
-                // succ 在当前 DFS 栈中，说明是回边
                 backEdges.emplace_back(b, succ);
             } 
             // 情况2：后继块未访问 -> 递归处理
@@ -753,7 +752,7 @@ std::vector<std::pair<BlockID, BlockID>> findBackEdges(
         stack.pop_back();   // 回溯：当前块处理完毕，弹出栈
     };
 
-    // 对所有未访问的块启动DFS（处理不连通图）
+    // 对所有未访问的块启动DFS
     for (auto& kv : cfg) {
         if (!visited.count(kv.first)) {
             dfs(kv.first);
@@ -810,14 +809,19 @@ std::unordered_set<std::string> IRGenerator::getLoopDefs(
     const std::unordered_set<BlockID>& loopBlocks,
     const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
 {
-    std::unordered_set<std::string> defs;
+    std::unordered_set<std::string> defs;   // 存储结果：循环内所有被赋值的变量名
 
+    // 遍历循环体内的每一个基本块
     for (auto blkId : loopBlocks) {
+        // 查找当前块ID对应的基本块对象
         auto it = blocks.find(blkId);
         if (it == blocks.end()) continue; // 没找到块，跳过
 
+        // 遍历当前块的所有指令
         for (auto& inst : it->second.instructions) {
+            // 检查是否为赋值指令
             if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(inst)) {
+                // 记录被赋值的变量名
                 defs.insert(assignInstr->target->name);
             }
         }
@@ -1067,10 +1071,24 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
         for (int k = start; k <= end; ++k) block->instructions.push_back(instrs[k]);
 
         // 如果基本块的第一条指令是标签，记录标签名
-        if (!block->instructions.empty()) {
+        /*if (!block->instructions.empty()) {
             if (auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
                 block->label = lbl->label;
             }
+        }*/
+
+        // 每一个基本块都有各自唯一的标签
+        // 如果第一条指令不是标签，生成一个新标签指令
+        if (block->instructions.empty() || 
+            !std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
+            std::string newLabel = "__block" + std::to_string(block->id); // 唯一标签名
+            auto lblInstr = std::make_shared<LabelInstr>(newLabel);
+            block->instructions.insert(block->instructions.begin(), lblInstr); // 插到最前面
+            block->label = newLabel; // 更新块标签
+        } else {
+            // 第一条是标签
+            auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
+            block->label = lbl->label;
         }
 
         blocks.push_back(block);    // 将基本块加入结果列表
@@ -1252,14 +1270,13 @@ void IRGenerator::constantPropagationCFG() {
     // 假定 blocks[0] 是入口（如果函数有多入口或特殊结构需修改）
     q.push(0);
 
-    /*while (!q.empty()) {
+    while (!q.empty()) {
         int bid = q.front(); q.pop();
         auto blk = blocks[bid];
 
         // 计算 inMap[bid]
         // in[bid] = meet(out[pred]) for all predecessors
         if (blk->predecessors.empty()) {
-            // entry block: in is empty(Unknown)
             inMap[bid] = ConstMap{};
         } else {
             ConstMap accum;
@@ -1273,16 +1290,13 @@ void IRGenerator::constantPropagationCFG() {
                 }
             }
 
-            // **关键点**：清除循环定义变量的常量状态（只有循环入口块才清除）
+            // 清除循环定义变量的常量状态（只有循环入口块才清除）
             if (loopDefs.count(bid)) {
                 clearLoopDefs(accum, loopDefs, bid);
             }
 
             inMap[bid] = accum;
         }
-
-        // **关键点**：清除循环定义变量的常量状态
-        //clearLoopDefs(inMap[bid], loopDefs, bid);
 
         // 计算 outMap[bid]
         // out = transfer(in, block.instructions)
@@ -1296,7 +1310,7 @@ void IRGenerator::constantPropagationCFG() {
             outMap[bid] = outEnv;
             for (auto& succ : blk->successors) q.push(succ->id);
         }
-    }*/
+    }
 
     // 6. 用 inMap 替换每个基本块内部可确定为常量的操作数（在替换时顺序应用 transfer）
     for (int bid = 0; bid < n; ++bid) {
