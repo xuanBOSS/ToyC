@@ -175,14 +175,25 @@ private:
 
     // 生成常量操作数
     std::shared_ptr<Operand> makeConstantOperand(int v);
+
     // 构建基本快
     std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();
+
     // 获取循环体内定义的所有变量集合（循环定义变量分析）
-    std::unordered_set<std::string> getLoopDefs(
+    /*std::unordered_set<std::string> getLoopDefs(
         const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
         BlockID fromBlk, BlockID toBlk,
         const std::unordered_map<BlockID, BasicBlock>& blocks
-    );
+    );*/
+    std::unordered_set<std::string> getLoopDefs(
+        const std::unordered_set<BlockID>& loopBlocks,
+        const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks);
+
+    // 返回循环体内所有块ID
+    std::unordered_set<int> getLoopBlocks(
+        const std::unordered_map<int, std::vector<int>>& cfg,
+        int fromBlk, int toBlk);
+   
     // 构建CFG
     void buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks);
     

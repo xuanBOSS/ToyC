@@ -772,7 +772,7 @@ std::vector<std::pair<BlockID, BlockID>> findBackEdges(
  * @param blocks 基本块集合（BlockID -> Block结构体）
  * @return 包含循环体内所有被赋值变量名的集合
  */
-std::unordered_set<std::string> IRGenerator::getLoopDefs(
+/*std::unordered_set<std::string> IRGenerator::getLoopDefs(
     const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
     BlockID fromBlk, BlockID toBlk,
     const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
@@ -805,7 +805,75 @@ std::unordered_set<std::string> IRGenerator::getLoopDefs(
         }
     }
     return defs;
+}*/
+std::unordered_set<std::string> IRGenerator::getLoopDefs(
+    const std::unordered_set<BlockID>& loopBlocks,
+    const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
+{
+    std::unordered_set<std::string> defs;
+
+    for (auto blkId : loopBlocks) {
+        auto it = blocks.find(blkId);
+        if (it == blocks.end()) continue; // 没找到块，跳过
+
+        for (auto& inst : it->second.instructions) {
+            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(inst)) {
+                defs.insert(assignInstr->target->name);
+            }
+        }
+    }
+    return defs;
 }
+
+/**
+ * 获取由回边(fromBlk→toBlk)定义的循环体内的所有基本块ID集合
+ * 
+ * @param cfg 控制流图（BlockID -> 后继列表）
+ * @param fromBlk 回边的起始块ID（循环体出口）
+ * @param toBlk 回边的目标块ID（循环体入口）
+ * @return 包含循环体内所有块ID的无序集合
+ */
+std::unordered_set<int> IRGenerator::getLoopBlocks(
+    const std::unordered_map<int, std::vector<int>>& cfg,
+    int fromBlk, int toBlk)
+{
+    // 构建反向CFG
+    std::unordered_map<int, std::vector<int>> predMap;
+    for (auto& kv : cfg) {
+        int u = kv.first;
+        for (int v : kv.second) {
+            predMap[v].push_back(u);
+        }
+    }
+
+    // 反向遍历识别循环体
+    // 从 fromBlk 出发沿反向边走
+    std::unordered_set<int> loopBlocks;
+    std::stack<int> st;
+
+    // 初始化：回边两端一定在循环体内
+    st.push(fromBlk);
+    loopBlocks.insert(toBlk); // 循环入口一定在循环内
+    loopBlocks.insert(fromBlk);
+
+    while (!st.empty()) {
+        int cur = st.top();
+        st.pop();
+
+        // 遍历当前块的所有前驱
+        for (int pred : predMap[cur]) {
+            if (loopBlocks.count(pred)) continue;   // 已处理则跳过
+            loopBlocks.insert(pred);
+            // 关键限制：不越过循环入口（避免包含外部块）
+            if (pred != toBlk) {
+                st.push(pred);
+            }
+        }
+    }
+
+    return loopBlocks;
+}
+
 
 /**
  * 清除指定基本块在循环中定义的变量的常量状态，将其标记为未知（Unknown）。
@@ -1157,11 +1225,23 @@ void IRGenerator::constantPropagationCFG() {
         int fromBlk = edge.first;
         int toBlk = edge.second;
 
-        auto defs = getLoopDefs(cfg, fromBlk, toBlk, blocksMap);
+        //auto defs = getLoopDefs(cfg, fromBlk, toBlk, blocksMap);
+
+        // 用 getLoopBlocks 得到该回边的自然循环块集合
+        auto loopBlocks = getLoopBlocks(cfg, fromBlk, toBlk);
+
+        // 收集该循环体内所有定义变量
+        auto defs = getLoopDefs(loopBlocks, blocksMap);
 
         // 合并 defs 到 loopDefs，key用循环入口块ID（toBlk）
         auto& defSet = loopDefs[toBlk];
         defSet.insert(defs.begin(), defs.end());
+
+        // 把 defs 分配给循环体中所有块
+        /*auto loopBlocks = getLoopBlocks(cfg, fromBlk, toBlk); // 找到循环体的所有 block ID
+        for (auto blkId : loopBlocks) {
+            loopDefs[blkId].insert(defs.begin(), defs.end());
+        }*/
     }
 
     // 4. 初始化 in/out map
@@ -1186,17 +1266,23 @@ void IRGenerator::constantPropagationCFG() {
             bool first = true;
             for (auto& p : blk->predecessors) {
                 if (first) {
-                    accum = outMap[p->id];
+                    accum = outMap[p->id];  // 初始化为第一个前驱的状态
                     first = false;
                 } else {
-                    accum = meetMaps(accum, outMap[p->id]);
+                    accum = meetMaps(accum, outMap[p->id]); // 合并其他前驱的状态
                 }
             }
+
+            // **关键点**：清除循环定义变量的常量状态（只有循环入口块才清除）
+            if (loopDefs.count(bid)) {
+                clearLoopDefs(accum, loopDefs, bid);
+            }
+
             inMap[bid] = accum;
         }
 
         // **关键点**：清除循环定义变量的常量状态
-        clearLoopDefs(inMap[bid], loopDefs, bid);
+        //clearLoopDefs(inMap[bid], loopDefs, bid);
 
         // 计算 outMap[bid]
         // out = transfer(in, block.instructions)
