@@ -1048,6 +1048,14 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
         else if (std::dynamic_pointer_cast<LabelInstr>(ins)) {
             isLeader[i] = 1; // label 自身是 leader（如果 label 在中间）
         }
+        // 规则7：函数调用的下一条指令是Leader（保守策略）
+        else if (std::dynamic_pointer_cast<CallInstr>(ins)) {
+            if (i + 1 < (int)instrs.size()) isLeader[i + 1] = 1;
+        }
+        // 规则8：函数开始指令是Leader
+        else if (std::dynamic_pointer_cast<FunctionBeginInstr>(ins)) {
+            isLeader[i] = 1;
+        }
     }
 
     // 收集所有Leader的索引
@@ -1107,37 +1115,64 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
         if (!b->label.empty()) labelToBlock[b->label] = b;
     }
 
+    // 建立 funcName -> block 映射
+    std::unordered_map<std::string, std::shared_ptr<BasicBlock>> functionLabelToBlock;
+    for (auto& block : blocks) {
+        if (!block->instructions.empty()) {
+            for(auto ins:block->instructions)
+            {
+                if(auto fbl = std::dynamic_pointer_cast<FunctionBeginInstr>(ins))
+                {
+                    // 如果是函数入口标签，就加入映射
+                    functionLabelToBlock[fbl->funcName] = block;
+                    break;
+                }
+            }
+            /*if (auto fbl = std::dynamic_pointer_cast<FunctionBeginInstr>(block->instructions.front())) {
+                // 如果是函数入口标签，就加入映射
+                functionLabelToBlock[fbl->funcName] = block;
+            }*/
+        }
+    }
+
+    // 被调函数名 -> 该函数所有调用点的返回位置块
+    std::unordered_map<std::string,std::vector<std::shared_ptr<BasicBlock>>> callReturnSites;
+
+    // 先把函数入口块的 functionName 设置好
+    for (auto& kv : functionLabelToBlock) {
+        const std::string& funcName = kv.first;
+        auto& entryBlock = kv.second;
+        entryBlock->functionName = funcName;
+    }
+
+    // 按照顺序遍历 blocks，给块分配 functionName
+    std::string currentFuncName;
+    for (auto& b : blocks) {
+        if (!b->instructions.empty()) {
+            /*if (auto fbegin = std::dynamic_pointer_cast<FunctionBeginInstr>(b->instructions.front())) {
+                currentFuncName = fbegin->funcName;
+            }*/
+           if(b->functionName != "") currentFuncName = b->functionName;
+        }
+        b->functionName = currentFuncName;
+    }
+
+    // 用来存储每个函数名对应的所有包含 ReturnInstr 的基本块集合，方便后面把这些函数的 return 块连接回调用点的返回块
+    std::unordered_map<std::string, std::vector<std::shared_ptr<BasicBlock>>> functionReturnBlocks;
+    for (auto& b : blocks) {
+        if (!b->instructions.empty()) {
+            auto last = b->instructions.back();
+            if (std::dynamic_pointer_cast<ReturnInstr>(last)) {
+                functionReturnBlocks[b->functionName].push_back(b);
+            }
+        }
+    }
+
     // 先清空 predecessors / successors（避免旧数据干扰）
     for (auto& b : blocks) {
         b->successors.clear();
         b->predecessors.clear();
     }
-
-    // 对每个 block，根据尾指令确定 successors
-    /*for (int i = 0; i < (int)blocks.size(); ++i) {
-        auto& b = blocks[i];
-        if (b->instructions.empty()) continue;
-        auto last = b->instructions.back();
-
-        if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(last)) {
-            // 条件分支：两个后继（目标标签 + fall-through）
-            auto it = labelToBlock.find(ifg->target->name);
-            if (it != labelToBlock.end()) {
-                b->successors.push_back(it->second);
-            }
-            // fall-through 到下一个块（如果存在）
-            if (i + 1 < (int)blocks.size()) b->successors.push_back(blocks[i + 1]);
-        } else if (auto g = std::dynamic_pointer_cast<GotoInstr>(last)) {
-            // 无条件跳转：只有跳转目标
-            auto it = labelToBlock.find(g->target->name);
-            if (it != labelToBlock.end()) b->successors.push_back(it->second);
-        } else if (std::dynamic_pointer_cast<ReturnInstr>(last)) {
-            // return: 没有后继
-        } else {
-            // 默认 fall-through
-            if (i + 1 < (int)blocks.size()) b->successors.push_back(blocks[i + 1]);
-        }
-    }*/
 
     // 对每个 block，根据尾指令确定 successors（去重）
     for (int i = 0; i < (int)blocks.size(); ++i) {
@@ -1156,12 +1191,45 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
                 auto it = labelToBlock.find(g->target->name);
                 if (it != labelToBlock.end()) succSet.insert(it->second);
 
-            } else if (!std::dynamic_pointer_cast<ReturnInstr>(last)) {
-                if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
             }
+            else if (auto call = std::dynamic_pointer_cast<CallInstr>(last)) {
+                // 1. 连接到被调函数入口（如果解析到）
+                auto it = functionLabelToBlock.find(call->funcName);
+                if (it != functionLabelToBlock.end()) succSet.insert(it->second);
+
+                // 2. 如果调用会返回，记录返回点（但是不要在此刻把调用块直接连到返回点）
+                if (i + 1 < blocks.size()) {
+                    // 记录：被调函数名 -> 返回点（调用之后的块）
+                    callReturnSites[call->funcName].push_back(blocks[i + 1]);
+                }
+            } 
+            else if (!std::dynamic_pointer_cast<ReturnInstr>(last)) {
+                //if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
+
+            } 
         }
 
         b->successors.assign(succSet.begin(), succSet.end());
+    }
+
+    //  在所有函数都处理完后：把被调函数的 return 块统一连回所有调用点的返回点
+    for (auto &kv : callReturnSites) {
+        const std::string &callee = kv.first;
+        const auto &returnSites = kv.second; // 所有调用该 callee 的返回点块
+
+        auto it = functionReturnBlocks.find(callee);
+        if (it == functionReturnBlocks.end()) continue; // 没有 return（或未解析），跳过
+
+        const auto &calleeReturnBlocks = it->second;
+        for (auto &retBlk : calleeReturnBlocks) {
+            // 把 retBlk 的后继加入每个 returnSite（去重）
+            std::unordered_set<std::shared_ptr<BasicBlock>> succSet(
+                retBlk->successors.begin(), retBlk->successors.end());
+            for (auto &retSiteBlk : returnSites) {
+                succSet.insert(retSiteBlk);
+            }
+            retBlk->successors.assign(succSet.begin(), succSet.end());
+        }
     }
 
     // 填充 predecessors
@@ -1809,7 +1877,28 @@ void IRGenerator::controlFlowOptimization() {
     
         inProgress.erase(blk);                     // 处理完成，从处理中集合移除
     };
-    dfs(blocks.front());
+
+
+    // 寻找程序入口
+    std::shared_ptr<BasicBlock> entry = nullptr;
+
+    for (auto& blk : blocks) {
+        for (auto& ins : blk->instructions) {
+            if (auto funcInstr = std::dynamic_pointer_cast<FunctionBeginInstr>(ins)) {
+                if (funcInstr->funcName == "main") { 
+                    entry = blk;
+                    goto found; // 直接跳出双层循环
+                }
+            }
+        }
+    }
+
+    found:
+    if (!entry) {
+        throw std::runtime_error("入口块 'main' 未找到");
+    }
+
+    dfs(entry);
 
     // 过滤不可达块
     std::vector<std::shared_ptr<BasicBlock>> newBlocks;
@@ -1912,35 +2001,50 @@ void IRGenerator::controlFlowOptimization() {
     }
 
     // Step 4: 重新线性化指令，优先fall-through后继
-    instructions.clear();
+    instructions.clear();   // 清空最终的指令序列，准备重新生成
     std::unordered_set<std::shared_ptr<BasicBlock>> visited;
 
+    // 定义深度优先搜索（DFS）函数，用于线性化基本块
     std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
+        // 如果基本块为空或已访问过，直接返回
         if (!blk || visited.count(blk)) return;
+
+        // 标记当前基本块为已访问
         visited.insert(blk);
 
+        // 将当前基本块的所有指令追加到最终的指令序列中
         instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
 
         // 找fall-through后继（非跳转目标）
         std::shared_ptr<BasicBlock> fallthrough = nullptr;
         if (!blk->instructions.empty()) {
-            auto lastInstr = blk->instructions.back();
+            auto lastInstr = blk->instructions.back();  // 获取最后一条指令
+
+            // 如果是 `Goto` 或 `Return`，则没有 fall-through
             if (std::dynamic_pointer_cast<GotoInstr>(lastInstr) || std::dynamic_pointer_cast<ReturnInstr>(lastInstr)) {
                 fallthrough = nullptr; // 无fall-through
-            } else if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
+            } 
+            // 如果是 `IfGoto`（条件跳转），则 fall-through 是第二个后继（false 分支）
+            else if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
                 if (blk->successors.size() > 1) fallthrough = blk->successors[1];
-            } else {
+            } 
+            // 其他情况（普通指令），fall-through 是唯一后继（如果有的话）
+            else {
                 if (blk->successors.size() == 1) fallthrough = blk->successors[0];
             }
         }
 
+        // 优先处理 fall-through 后继（保证顺序执行）
         if (fallthrough) dfsLinearize(fallthrough);
+
+        // 处理其他后继（跳转目标）
         for (auto& succ : blk->successors) {
             if (succ != fallthrough) dfsLinearize(succ);
         }
     };
 
-    dfsLinearize(blocks.front());
+    // 从入口基本块开始线性化
+    dfsLinearize(entry);
 
     // Step 5: 最后校验CFG有效性，避免标签或跳转错误
     if (!validateCFG(blocks)) {

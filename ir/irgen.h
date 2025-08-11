@@ -174,6 +174,7 @@ private:
         std::vector<std::shared_ptr<BasicBlock>> successors;
         std::vector<std::shared_ptr<BasicBlock>> predecessors;
         std::string label; // 如果以标签开头则记录标签名（可选）
+        std::string functionName;   // 记录该基本块属于哪个函数
     };
 
     // 生成常量操作数
