@@ -1100,14 +1100,21 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
 // ---------- 构建 CFG（连接基本块） ----------
 void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
     if (blocks.empty()) return;
+
     // 建立 label -> block 映射（块以 label 开头）
     std::unordered_map<std::string, std::shared_ptr<BasicBlock>> labelToBlock;
     for (auto& b : blocks) {
         if (!b->label.empty()) labelToBlock[b->label] = b;
     }
 
+    // 先清空 predecessors / successors（避免旧数据干扰）
+    for (auto& b : blocks) {
+        b->successors.clear();
+        b->predecessors.clear();
+    }
+
     // 对每个 block，根据尾指令确定 successors
-    for (int i = 0; i < (int)blocks.size(); ++i) {
+    /*for (int i = 0; i < (int)blocks.size(); ++i) {
         auto& b = blocks[i];
         if (b->instructions.empty()) continue;
         auto last = b->instructions.back();
@@ -1130,6 +1137,31 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
             // 默认 fall-through
             if (i + 1 < (int)blocks.size()) b->successors.push_back(blocks[i + 1]);
         }
+    }*/
+
+    // 对每个 block，根据尾指令确定 successors（去重）
+    for (int i = 0; i < (int)blocks.size(); ++i) {
+        auto& b = blocks[i];
+        std::unordered_set<std::shared_ptr<BasicBlock>> succSet;
+
+        if (!b->instructions.empty()) {
+            auto last = b->instructions.back();
+
+            if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(last)) {
+                auto it = labelToBlock.find(ifg->target->name);
+                if (it != labelToBlock.end()) succSet.insert(it->second);
+                if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
+
+            } else if (auto g = std::dynamic_pointer_cast<GotoInstr>(last)) {
+                auto it = labelToBlock.find(g->target->name);
+                if (it != labelToBlock.end()) succSet.insert(it->second);
+
+            } else if (!std::dynamic_pointer_cast<ReturnInstr>(last)) {
+                if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
+            }
+        }
+
+        b->successors.assign(succSet.begin(), succSet.end());
     }
 
     // 填充 predecessors
@@ -1432,7 +1464,7 @@ void IRGenerator::deadCodeElimination() {
     }
 
     // Step 2: 计算活跃变量（live_in和live_out）
-    std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
+    /*std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
 
     bool changed;
     do {
@@ -1461,7 +1493,52 @@ void IRGenerator::deadCodeElimination() {
                 changed = true;     // 标记需要继续迭代
             }
         }
-    } while (changed);
+    } while (changed);*/
+
+    // Step 2: 计算活跃变量（live_in和live_out）
+    std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
+
+    // 初始化 worklist（逆序放入所有块）
+    std::queue<std::shared_ptr<BasicBlock>> worklist;
+    std::unordered_set<std::shared_ptr<BasicBlock>> inQueue;
+    for (auto it = basicBlocks.rbegin(); it != basicBlocks.rend(); ++it) {
+        worklist.push(*it);
+        inQueue.insert(*it);
+    }
+
+    while (!worklist.empty()) {
+        auto block = worklist.front();
+        worklist.pop();
+        inQueue.erase(block);
+
+        // live_out = 后继的 live_in 并集
+        std::unordered_set<std::string> new_live_out;
+        for (auto succ : block->successors) {
+            new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+        }
+
+        // live_in = use ∪ (live_out - def)
+        std::unordered_set<std::string> new_live_in = use[block];
+        for (auto& var : new_live_out) {
+            if (def[block].find(var) == def[block].end()) {
+                new_live_in.insert(var);
+            }
+        }
+
+        // 如果有变化，更新并把前驱加入队列
+        if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
+            live_in[block] = std::move(new_live_in);
+            live_out[block] = std::move(new_live_out);
+
+            for (auto pred : block->predecessors) {
+                if (!inQueue.count(pred)) {
+                    worklist.push(pred);
+                    inQueue.insert(pred);
+                }
+            }
+        }
+    }
+
 
     // Step 3: 反向删除死代码
     for (auto& block : basicBlocks) {
