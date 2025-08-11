@@ -1615,6 +1615,8 @@ void IRGenerator::controlFlowOptimization() {
     auto blocks = buildBasicBlocks();
     buildCFG(blocks);
 
+    if (blocks.empty()) return;
+
     // ==== Step 1: 删除不可达基本块 ====
     std::unordered_set<std::shared_ptr<BasicBlock>> reachable;  // 可达基本块集合
     std::function<void(std::shared_ptr<BasicBlock>)> dfs =
@@ -1641,7 +1643,7 @@ void IRGenerator::controlFlowOptimization() {
     blocks.swap(newBlocks); // 更新基本块列表
 
     // ==== Step 2: 合并直连基本块 ====
-    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;   // 待删除块集合
+    /*std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;   // 待删除块集合
     for (auto& blk : blocks) {
         if (blk->instructions.empty()) continue;    // 跳过空块
 
@@ -1683,6 +1685,58 @@ void IRGenerator::controlFlowOptimization() {
             [&](std::shared_ptr<BasicBlock> b) { return toRemove.count(b); }
         ),
         blocks.end()
+    );*/
+
+    // ==== Step 2: 合并直连基本块 ====
+    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
+    for (auto& blk : blocks) {
+        if (blk->instructions.empty()) continue;
+
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            auto target = blk->successors.size() == 1 ? blk->successors[0] : nullptr;
+            if (target && target->predecessors.size() == 1) {
+                blk->instructions.pop_back();  // 删除跳转指令
+
+                // 保留目标块首指令标签（如果有）
+                if (!target->instructions.empty()) {
+                    auto firstInstr = target->instructions.front();
+                    if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr)) {
+                        blk->instructions.push_back(labelInstr);
+                        blk->instructions.insert(
+                            blk->instructions.end(),
+                            target->instructions.begin() + 1,
+                            target->instructions.end()
+                        );
+                    } else {
+                        blk->instructions.insert(
+                            blk->instructions.end(),
+                            target->instructions.begin(),
+                            target->instructions.end()
+                        );
+                    }
+                }
+
+                // 更新 CFG
+                blk->successors = target->successors;
+
+                // 更新后继块的前驱指向当前块
+                for (auto& succ : target->successors) {
+                    for (auto& pred : succ->predecessors) {
+                        if (pred == target) {
+                            pred = blk;
+                        }
+                    }
+                }
+                toRemove.insert(target);
+            }
+        }
+    }
+
+    // 删除合并掉的块
+    blocks.erase(
+        std::remove_if(blocks.begin(), blocks.end(),
+            [&](const std::shared_ptr<BasicBlock>& b) { return toRemove.count(b); }),
+        blocks.end()
     );
 
     // ==== Step 3: 删除多余跳转 ====
@@ -1702,11 +1756,11 @@ void IRGenerator::controlFlowOptimization() {
                         blk->instructions.pop_back();    // 删除跳转指令
                         // 更新控制流图：
                         // 移除到下一个块的显式跳转，改为隐式顺序执行
-                        blk->successors.erase(
+                        /*blk->successors.erase(
                             std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
                             blk->successors.end()
                         );
-                        blk->successors.push_back(nextBlk); // 直接顺序流
+                        blk->successors.push_back(nextBlk);*/ // 直接顺序流
                     }
                 }
             }
@@ -1716,9 +1770,20 @@ void IRGenerator::controlFlowOptimization() {
     // ==== Step 4: 重新线性化指令 ====
     instructions.clear();   // 清空原始指令序列
     // 将所有基本块的指令按顺序合并
-    for (auto& blk : blocks) {
+    /*for (auto& blk : blocks) {
         instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
-    }
+    }*/
+    std::unordered_set<std::shared_ptr<BasicBlock>> visited;
+    std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
+        if (!blk || visited.count(blk)) return;
+        visited.insert(blk);
+        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
+        for (auto& succ : blk->successors) {
+            dfsLinearize(succ);
+        }
+    };
+
+    dfsLinearize(blocks.front());
 }
 
 
