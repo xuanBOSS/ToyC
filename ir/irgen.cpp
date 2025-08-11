@@ -1780,17 +1780,38 @@ void IRGenerator::controlFlowOptimization() {
     if (blocks.empty()) return;
 
     // Step 1: 删除不可达基本块
-    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;
-    std::function<void(std::shared_ptr<BasicBlock>)> dfs =
+    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;      // 存储可达块
+    std::unordered_set<std::shared_ptr<BasicBlock>> inProgress;                     // 存储正在处理的块，用于检测循环
+
+    /*std::function<void(std::shared_ptr<BasicBlock>)> dfs =
         [&](std::shared_ptr<BasicBlock> blk) {
             if (!blk || reachable.count(blk)) return;
             reachable.insert(blk);
             for (auto& succ : blk->successors) {
                 dfs(succ);
             }
-        };
+        };*/
+
+    // 使用安全的DFS遍历，避免循环导致的无限递归
+    std::function<void(std::shared_ptr<BasicBlock>)> dfs = [&](std::shared_ptr<BasicBlock> blk) {
+        if (!blk || reachable.count(blk)) return;  // 已访问的块直接返回
+    
+        // 检测是否在当前DFS路径上（循环检测）
+        if (inProgress.count(blk)) return;         // 如果当前块正在处理中，直接返回
+    
+        inProgress.insert(blk);                    // 标记当前块为处理中
+        reachable.insert(blk);                     // 标记当前块为可达
+    
+        // 递归处理所有后继块
+        for (auto succ : blk->successors) {
+            dfs(succ);
+        }
+    
+        inProgress.erase(blk);                     // 处理完成，从处理中集合移除
+    };
     dfs(blocks.front());
 
+    // 过滤不可达块
     std::vector<std::shared_ptr<BasicBlock>> newBlocks;
     for (auto& blk : blocks) {
         if (reachable.count(blk)) newBlocks.push_back(blk);
