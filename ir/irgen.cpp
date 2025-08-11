@@ -1397,153 +1397,15 @@ void IRGenerator::constantPropagationCFG() {
 
 
 /**
- * 死代码消除优化。
- * 
- * 删除对程序输出没有影响的指令。
- * 例如，对从未使用的变量的赋值。
- */
-/*void IRGenerator::deadCodeElimination() {
-    // 首先，识别使用的变量
-    std::unordered_set<std::string> usedVars;
-    
-    // 第一遍：识别所有使用的变量
-    for (const auto& instr : instructions) {
-        auto usedInInstr = IRAnalyzer::getUsedVariables(instr);
-        for (const auto& var : usedInInstr) {
-            usedVars.insert(var);
-        }
-    }
-    
-    // 现在标记所有具有副作用（调用、返回、跳转等）的指令
-    // 或定义被使用的变量
-    std::vector<bool> isLive(instructions.size(), false);
-    
-    // 第二遍：标记活跃指令
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        auto instr = instructions[i];
-        
-        // 具有副作用的指令总是活跃的
-        if (std::dynamic_pointer_cast<CallInstr>(instr) ||
-            std::dynamic_pointer_cast<ReturnInstr>(instr) ||
-            std::dynamic_pointer_cast<GotoInstr>(instr) ||
-            std::dynamic_pointer_cast<IfGotoInstr>(instr) ||
-            std::dynamic_pointer_cast<LabelInstr>(instr) ||
-            std::dynamic_pointer_cast<FunctionBeginInstr>(instr) ||
-            std::dynamic_pointer_cast<FunctionEndInstr>(instr) ||
-            std::dynamic_pointer_cast<ParamInstr>(instr)) {
-            isLive[i] = true;
-        }
-        // 定义被使用变量的指令是活跃的
-        else {
-            auto definedVars = IRAnalyzer::getDefinedVariables(instr);
-            for (const auto& var : definedVars) {
-                if (usedVars.find(var) != usedVars.end()) {
-                    isLive[i] = true;
-                    break;
-                }
-            }
-        }
-    }
-    
-    // 第三遍：只保留活跃指令
-    std::vector<std::shared_ptr<IRInstr>> newInstructions;
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        if (isLive[i]) {
-            newInstructions.push_back(instructions[i]);
-        }
-    }
-    
-    instructions = newInstructions;
-}*/
-
-/**
- * 执行死代码消除优化
+ * 执行死代码消除优化（Dead Code Elimination, DCE）
  * 算法步骤：
- * 1. 标记所有具有副作用的指令使用的变量（种子）
- * 2. 迭代传播活跃变量（从被使用的变量反向传播到定义它们的变量）
- * 3. 标记活跃指令（有副作用或定义活跃变量的指令）
- * 4. 过滤掉非活跃指令
+ * 1. 构建基本块和控制流图（CFG）
+ * 2. 计算每个基本块的use和def集合
+ * 3. 迭代计算live_in和live_out集合（数据流分析）
+ * 4. 反向扫描指令，删除未被使用的定义
  */
-/*void IRGenerator::deadCodeElimination() {
-    // 存储活跃变量集合（会被使用的变量）
-    std::unordered_set<std::string> usedVars;
-
-    // 1. 标记初始活跃变量（从副作用指令开始）
-    for (const auto& instr : instructions) {
-        // 检查是否是副作用指令（如函数调用、跳转等）
-        if (isSideEffectInstr(instr)) {
-            auto usedInInstr = IRAnalyzer::getUsedVariables(instr);
-            // 将这些变量加入活跃集合
-            for (const auto& v : usedInInstr) {
-                usedVars.insert(v);
-            }
-        }
-    }
-
-    // 2. 反复迭代传播活跃变量
-    bool changed = true;
-    while (changed) {
-        changed = false;
-
-        // 遍历所有指令
-        for (const auto& instr : instructions) {
-            // 获取当前指令定义的变量
-            auto definedVars = IRAnalyzer::getDefinedVariables(instr);
-
-            // 判断该指令是否定义了活跃变量
-            bool defIsUsed = false;
-            for (const auto& dvar : definedVars) {
-                if (usedVars.count(dvar) > 0) {
-                    defIsUsed = true;
-                    break;
-                }
-            }
-
-            // 如果定义的变量活跃，则将该指令用到的变量加入活跃集合
-            if (defIsUsed) {
-                auto usedInInstr = IRAnalyzer::getUsedVariables(instr);
-                for (const auto& v : usedInInstr) {
-                    // 如果变量是新加入的，标记需要继续迭代
-                    if (usedVars.insert(v).second) {
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
-
-    // 3. 标记活跃指令（副作用指令或定义活跃变量的指令）
-    std::vector<bool> isLive(instructions.size(), false);
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        const auto& instr = instructions[i];
-
-        // 副作用指令总是活跃的
-        if (isSideEffectInstr(instr)) {
-            isLive[i] = true;
-        } else {
-            // 检查是否定义了活跃变量
-            auto definedVars = IRAnalyzer::getDefinedVariables(instr);
-            for (const auto& dvar : definedVars) {
-                if (usedVars.count(dvar) > 0) {
-                    isLive[i] = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    // 4. 只保留活跃指令
-    std::vector<std::shared_ptr<IRInstr>> newInstructions;
-    newInstructions.reserve(instructions.size());
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        if (isLive[i]) {
-            newInstructions.push_back(instructions[i]);
-        }
-    }
-    instructions = std::move(newInstructions);
-}*/
 void IRGenerator::deadCodeElimination() {
-    //构建 basic blocks 与 CFG
+     // Step 0: 构建基本块和控制流图
     auto basicBlocks = buildBasicBlocks();
     buildCFG(basicBlocks);
 
@@ -1551,27 +1413,31 @@ void IRGenerator::deadCodeElimination() {
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> use, def;
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
+            // 获取当前指令定义和使用的变量
             auto defs = IRAnalyzer::getDefinedVariables(instr);
             auto uses = IRAnalyzer::getUsedVariables(instr);
 
+            // 构建use集合：变量在被定义前被使用
             for (auto& u : uses) {
                 if (def[block].find(u) == def[block].end()) {
                     use[block].insert(u);
                 }
             }
+
+            // 构建def集合：当前指令定义的所有变量
             for (auto& d : defs) {
                 def[block].insert(d);
             }
         }
     }
 
-    // Step 2: 初始化 live_in / live_out
+    // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
 
     bool changed;
     do {
         changed = false;
-        // 反向遍历所有基本块（顺序无所谓，只要反复迭代到收敛）
+        // 反向遍历所有基本块（数据流分析的逆向传播）
         for (auto& block : basicBlocks) {
             // live_out = 后继的 live_in 并集
             std::unordered_set<std::string> new_live_out;
@@ -1582,28 +1448,33 @@ void IRGenerator::deadCodeElimination() {
             // live_in = use ∪ (live_out - def)
             std::unordered_set<std::string> new_live_in = use[block];
             for (auto& var : new_live_out) {
+                // 如果变量在出口活跃且未被当前块定义，则加入入口活跃集合
                 if (def[block].find(var) == def[block].end()) {
                     new_live_in.insert(var);
                 }
             }
 
+            // 检查是否有变化
             if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
                 live_in[block] = std::move(new_live_in);
                 live_out[block] = std::move(new_live_out);
-                changed = true;
+                changed = true;     // 标记需要继续迭代
             }
         }
     } while (changed);
 
     // Step 3: 反向删除死代码
     for (auto& block : basicBlocks) {
-        auto live = live_out[block]; // 从 live_out 开始反向扫描
+        auto live = live_out[block];    // 初始化为基本块出口的活跃变量集合
+
+        // 反向遍历指令（从后往前）
         for (auto it = block->instructions.rbegin(); it != block->instructions.rend(); ) {
             auto defs = IRAnalyzer::getDefinedVariables(*it);
             auto uses = IRAnalyzer::getUsedVariables(*it);
 
-            bool hasSideEffect = isSideEffectInstr(*it);
+            bool hasSideEffect = isSideEffectInstr(*it);    // 检查是否是副作用指令
 
+            // 判断当前指令是否定义了活跃变量
             bool isLive = false;
             for (auto& d : defs) {
                 if (live.find(d) != live.end()) {
@@ -1612,6 +1483,7 @@ void IRGenerator::deadCodeElimination() {
                 }
             }
 
+            // 删除条件：1. 未定义活跃变量 2. 无副作用 3. 实际有定义（避免删除空指令）
             if (!isLive && !hasSideEffect && !defs.empty()) {
                 // 删除死代码
                 it = decltype(it){ block->instructions.erase(std::next(it).base()) };
@@ -1620,10 +1492,10 @@ void IRGenerator::deadCodeElimination() {
 
             // 更新 live 集合
             for (auto& d : defs) {
-                live.erase(d);
+                live.erase(d);      // 定义的变量不再活跃
             }
             for (auto& u : uses) {
-                live.insert(u);
+                live.insert(u);     // 使用的变量变为活跃
             }
 
             ++it;
@@ -1651,6 +1523,128 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
         std::dynamic_pointer_cast<FunctionEndInstr>(instr) != nullptr ||        // 函数结束
         std::dynamic_pointer_cast<ParamInstr>(instr) != nullptr;                // 参数传递
 }
+
+/**
+ * 执行控制流优化（Control Flow Optimization）
+ * 主要包含四个优化阶段：
+ * 1. 删除不可达基本块
+ * 2. 合并直连基本块
+ * 3. 删除多余跳转
+ * 4. 重新线性化指令
+ */
+void IRGenerator::controlFlowOptimization() {
+
+    // 构建基本块和控制流图
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    // ==== Step 1: 删除不可达基本块 ====
+    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;  // 可达基本块集合
+    std::function<void(std::shared_ptr<BasicBlock>)> dfs =
+        [&](std::shared_ptr<BasicBlock> blk) {
+            // 跳过空块或已访问块
+            if (!blk || reachable.count(blk)) return;
+            reachable.insert(blk);  // 标记当前块为可达
+            // 递归遍历所有后继块
+            for (auto& succ : blk->successors) {
+                dfs(succ);
+            }
+        };
+
+    // 从入口块开始深度优先遍历
+    dfs(blocks.front());    // 假设第一个基本块是入口块
+
+    // 过滤掉不可达的基本块
+    std::vector<std::shared_ptr<BasicBlock>> newBlocks;
+    for (auto& blk : blocks) {
+        if (reachable.count(blk)) {
+            newBlocks.push_back(blk);
+        }
+    }
+    blocks.swap(newBlocks); // 更新基本块列表
+
+    // ==== Step 2: 合并直连基本块 ====
+    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;   // 待删除块集合
+    for (auto& blk : blocks) {
+        if (blk->instructions.empty()) continue;    // 跳过空块
+
+        // 检查最后一条指令是否为无条件跳转
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            // 获取跳转目标块（需确保当前块只有一个后继）
+            auto target = blk->successors.size() == 1 ? blk->successors[0] : nullptr;
+
+            // 满足合并条件：目标块有且仅有一个前驱（即当前块）
+            if (target && target->predecessors.size() == 1) {
+                blk->instructions.pop_back();   // 删除跳转指令
+                // 将目标块指令合并到当前块
+                blk->instructions.insert(
+                    blk->instructions.end(),
+                    target->instructions.begin(),
+                    target->instructions.end()
+                );
+
+                // 更新 CFG
+                // 当前块的后继改为目标块的后继
+                blk->successors = target->successors;
+                // 更新目标块后继的前驱指向当前块
+                for (auto& succ : target->successors) {
+                    for (auto& pred : succ->predecessors) {
+                        if (pred == target) {
+                            pred = blk;
+                        }
+                    }
+                }
+                toRemove.insert(target);    // 标记目标块待删除
+            }
+        }
+    }
+
+    // 移除已合并的 target 块
+    blocks.erase(
+        std::remove_if(
+            blocks.begin(), blocks.end(),
+            [&](std::shared_ptr<BasicBlock> b) { return toRemove.count(b); }
+        ),
+        blocks.end()
+    );
+
+    // ==== Step 3: 删除多余跳转 ====
+    for (size_t i = 0; i + 1 < blocks.size(); ++i) {
+        auto& blk = blocks[i];
+        if (blk->instructions.empty()) continue;
+
+        // 检查最后一条指令是否为跳转
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            auto& nextBlk = blocks[i + 1];  // 物理相邻的下一个块
+
+            // 确认 nextBlk 的第一个指令是标签
+            if (!nextBlk->instructions.empty()) {
+                if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(nextBlk->instructions.front())) {
+                    // 如果跳转目标就是下一个块，则删除冗余跳转
+                    if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
+                        blk->instructions.pop_back();    // 删除跳转指令
+                        // 更新控制流图：
+                        // 移除到下一个块的显式跳转，改为隐式顺序执行
+                        blk->successors.erase(
+                            std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
+                            blk->successors.end()
+                        );
+                        blk->successors.push_back(nextBlk); // 直接顺序流
+                    }
+                }
+            }
+        }
+    }
+
+    // ==== Step 4: 重新线性化指令 ====
+    instructions.clear();   // 清空原始指令序列
+    // 将所有基本块的指令按顺序合并
+    for (auto& blk : blocks) {
+        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
+    }
+}
+
+
 
 
 /**
