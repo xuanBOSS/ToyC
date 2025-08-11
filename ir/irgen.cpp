@@ -1818,6 +1818,7 @@ void IRGenerator::controlFlowOptimization() {
     }
     blocks.swap(newBlocks);
 
+
     // Step 2: 合并直连基本块
     std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
 
@@ -1886,7 +1887,7 @@ void IRGenerator::controlFlowOptimization() {
     );
 
     // Step 3: 删除多余跳转，且同步更新 successors
-    /*for (size_t i = 0; i + 1 < blocks.size(); ++i) {
+    for (size_t i = 0; i + 1 < blocks.size(); ++i) {
         auto& blk = blocks[i];
         if (blk->instructions.empty()) continue;
 
@@ -1945,7 +1946,7 @@ void IRGenerator::controlFlowOptimization() {
     if (!validateCFG(blocks)) {
         std::cerr << "Error: CFG validation failed after controlFlowOptimization\n";
         // 这里可考虑回滚或抛异常
-    }*/
+    }
 }
 
 
