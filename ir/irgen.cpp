@@ -1463,37 +1463,6 @@ void IRGenerator::deadCodeElimination() {
         }
     }
 
-    // Step 2: 计算活跃变量（live_in和live_out）
-    /*std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
-
-    bool changed;
-    do {
-        changed = false;
-        // 反向遍历所有基本块（数据流分析的逆向传播）
-        for (auto& block : basicBlocks) {
-            // live_out = 后继的 live_in 并集
-            std::unordered_set<std::string> new_live_out;
-            for (auto succ : block->successors) {
-                new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
-            }
-
-            // live_in = use ∪ (live_out - def)
-            std::unordered_set<std::string> new_live_in = use[block];
-            for (auto& var : new_live_out) {
-                // 如果变量在出口活跃且未被当前块定义，则加入入口活跃集合
-                if (def[block].find(var) == def[block].end()) {
-                    new_live_in.insert(var);
-                }
-            }
-
-            // 检查是否有变化
-            if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
-                live_in[block] = std::move(new_live_in);
-                live_out[block] = std::move(new_live_out);
-                changed = true;     // 标记需要继续迭代
-            }
-        }
-    } while (changed);*/
 
     // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
@@ -1609,7 +1578,7 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
  * 3. 删除多余跳转
  * 4. 重新线性化指令
  */
-void IRGenerator::controlFlowOptimization() {
+/*void IRGenerator::controlFlowOptimization() {
 
     // 构建基本块和控制流图
     auto blocks = buildBasicBlocks();
@@ -1643,57 +1612,16 @@ void IRGenerator::controlFlowOptimization() {
     blocks.swap(newBlocks); // 更新基本块列表
 
     // ==== Step 2: 合并直连基本块 ====
-    /*std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;   // 待删除块集合
+    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;    // 待删除块
     for (auto& blk : blocks) {
         if (blk->instructions.empty()) continue;    // 跳过空块
 
-        // 检查最后一条指令是否为无条件跳转
+        // 检查最后一条指令是否为goto
         if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-            // 获取跳转目标块（需确保当前块只有一个后继）
+            // 获取唯一后继块（当前块必须有且仅有一个后继）
             auto target = blk->successors.size() == 1 ? blk->successors[0] : nullptr;
-
-            // 满足合并条件：目标块有且仅有一个前驱（即当前块）
-            if (target && target->predecessors.size() == 1) {
-                blk->instructions.pop_back();   // 删除跳转指令
-                // 将目标块指令合并到当前块
-                blk->instructions.insert(
-                    blk->instructions.end(),
-                    target->instructions.begin(),
-                    target->instructions.end()
-                );
-
-                // 更新 CFG
-                // 当前块的后继改为目标块的后继
-                blk->successors = target->successors;
-                // 更新目标块后继的前驱指向当前块
-                for (auto& succ : target->successors) {
-                    for (auto& pred : succ->predecessors) {
-                        if (pred == target) {
-                            pred = blk;
-                        }
-                    }
-                }
-                toRemove.insert(target);    // 标记目标块待删除
-            }
-        }
-    }
-
-    // 移除已合并的 target 块
-    blocks.erase(
-        std::remove_if(
-            blocks.begin(), blocks.end(),
-            [&](std::shared_ptr<BasicBlock> b) { return toRemove.count(b); }
-        ),
-        blocks.end()
-    );*/
-
-    // ==== Step 2: 合并直连基本块 ====
-    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
-    for (auto& blk : blocks) {
-        if (blk->instructions.empty()) continue;
-
-        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-            auto target = blk->successors.size() == 1 ? blk->successors[0] : nullptr;
+            
+            // 满足合并条件：后继块有且仅有一个前驱（即当前块）
             if (target && target->predecessors.size() == 1) {
                 blk->instructions.pop_back();  // 删除跳转指令
 
@@ -1701,13 +1629,15 @@ void IRGenerator::controlFlowOptimization() {
                 if (!target->instructions.empty()) {
                     auto firstInstr = target->instructions.front();
                     if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr)) {
-                        blk->instructions.push_back(labelInstr);
+                        blk->instructions.push_back(labelInstr);    // 保留标签
+                        // 合并剩余指令
                         blk->instructions.insert(
                             blk->instructions.end(),
                             target->instructions.begin() + 1,
                             target->instructions.end()
                         );
                     } else {
+                        // 无标签则全合并
                         blk->instructions.insert(
                             blk->instructions.end(),
                             target->instructions.begin(),
@@ -1754,13 +1684,6 @@ void IRGenerator::controlFlowOptimization() {
                     // 如果跳转目标就是下一个块，则删除冗余跳转
                     if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
                         blk->instructions.pop_back();    // 删除跳转指令
-                        // 更新控制流图：
-                        // 移除到下一个块的显式跳转，改为隐式顺序执行
-                        /*blk->successors.erase(
-                            std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
-                            blk->successors.end()
-                        );
-                        blk->successors.push_back(nextBlk);*/ // 直接顺序流
                     }
                 }
             }
@@ -1769,22 +1692,241 @@ void IRGenerator::controlFlowOptimization() {
 
     // ==== Step 4: 重新线性化指令 ====
     instructions.clear();   // 清空原始指令序列
-    // 将所有基本块的指令按顺序合并
-    /*for (auto& blk : blocks) {
-        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
-    }*/
     std::unordered_set<std::shared_ptr<BasicBlock>> visited;
+
+    // 深度优先遍历按控制流顺序重组指令
     std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
         if (!blk || visited.count(blk)) return;
         visited.insert(blk);
+        // 添加当前块指令
         instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
+        // 递归处理后继
         for (auto& succ : blk->successors) {
             dfsLinearize(succ);
         }
     };
 
-    dfsLinearize(blocks.front());
+    dfsLinearize(blocks.front());   // 从入口块开始重组
+}*/
+
+// 辅助：更新所有跳转指令目标标签，fromLabel -> toLabel
+void IRGenerator::updateJumpTargets(
+    std::vector<std::shared_ptr<BasicBlock>>& blocks,
+    const std::string& fromLabel,
+    const std::string& toLabel)
+{
+    for (auto& blk : blocks) {
+        for (auto& instr : blk->instructions) {
+            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instr)) {
+                if (gotoInstr->target && gotoInstr->target->name == fromLabel) {
+                    gotoInstr->target->name = toLabel;
+                }
+            }
+            if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+                if (ifGotoInstr->target && ifGotoInstr->target->name == fromLabel) {
+                    ifGotoInstr->target->name = toLabel;
+                }
+            }
+        }
+    }
 }
+
+// 校验 CFG 有效性，标签唯一且跳转目标存在
+bool IRGenerator::validateCFG(const std::vector<std::shared_ptr<BasicBlock>>& blocks) {
+    std::unordered_set<std::string> allLabels;
+    std::unordered_set<std::string> usedLabels;
+
+    for (const auto& blk : blocks) {
+        if (blk->instructions.empty()) continue;
+        // 基本块首指令必须是标签
+        auto firstInstr = blk->instructions.front();
+        auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr);
+        if (!labelInstr) {
+            std::cerr << "Error: BasicBlock missing starting LabelInstr\n";
+            return false;
+        }
+        // 标签唯一
+        if (allLabels.count(labelInstr->label)) {
+            std::cerr << "Error: Duplicate label: " << labelInstr->label << "\n";
+            return false;
+        }
+        allLabels.insert(labelInstr->label);
+
+        // 收集跳转目标
+        for (const auto& instr : blk->instructions) {
+            if (auto g = std::dynamic_pointer_cast<GotoInstr>(instr)) {
+                if (g->target) usedLabels.insert(g->target->name);
+            }
+            if (auto ig = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+                if (ig->target) usedLabels.insert(ig->target->name);
+            }
+        }
+    }
+
+    // 检查跳转目标是否都存在
+    for (const auto& label : usedLabels) {
+        if (!allLabels.count(label)) {
+            std::cerr << "Error: Jump target label not found: " << label << "\n";
+            return false;
+        }
+    }
+    return true;
+}
+
+void IRGenerator::controlFlowOptimization() {
+    // 构建基本块和CFG
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+    if (blocks.empty()) return;
+
+    // Step 1: 删除不可达基本块
+    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;
+    std::function<void(std::shared_ptr<BasicBlock>)> dfs =
+        [&](std::shared_ptr<BasicBlock> blk) {
+            if (!blk || reachable.count(blk)) return;
+            reachable.insert(blk);
+            for (auto& succ : blk->successors) {
+                dfs(succ);
+            }
+        };
+    dfs(blocks.front());
+
+    std::vector<std::shared_ptr<BasicBlock>> newBlocks;
+    for (auto& blk : blocks) {
+        if (reachable.count(blk)) newBlocks.push_back(blk);
+    }
+    blocks.swap(newBlocks);
+
+    // Step 2: 合并直连基本块
+    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
+
+    for (auto& blk : blocks) {
+        if (blk->instructions.empty()) continue;
+
+        // 必须保证第一个指令是标签
+        auto firstInstr = blk->instructions.front();
+        auto blkLabelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr);
+        if (!blkLabelInstr) continue; // 【修改点】跳过无标签块，确保标签存在
+
+        // 检查最后一条是否为goto
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            if (blk->successors.size() != 1) continue;
+            auto target = blk->successors[0];
+            if (!target || target->instructions.empty()) continue;
+
+            // 目标块必须只有一个前驱（即当前块）
+            if (target->predecessors.size() != 1 || target->predecessors[0] != blk) continue;
+
+            // 目标块第一个指令必须是标签
+            auto targetLabelInstr = std::dynamic_pointer_cast<LabelInstr>(target->instructions.front());
+            if (!targetLabelInstr) continue;
+
+            // 【修改点】合并块前先记录标签名
+            std::string blkLabel = blkLabelInstr->label;
+            std::string targetLabel = targetLabelInstr->label;
+
+            // 【修改点】合并时删除当前块尾部goto
+            blk->instructions.pop_back();
+
+            // 【修改点】删除目标块标签指令（保持块唯一标签）
+            target->instructions.erase(target->instructions.begin());
+
+            // 合并目标块剩余指令
+            blk->instructions.insert(
+                blk->instructions.end(),
+                target->instructions.begin(),
+                target->instructions.end()
+            );
+
+            // 更新CFG successors
+            blk->successors = target->successors;
+
+            // 更新目标块后继的predecessors指向当前块
+            for (auto& succ : target->successors) {
+                for (auto& pred : succ->predecessors) {
+                    if (pred == target) {
+                        pred = blk;
+                    }
+                }
+            }
+
+            // 【修改点】更新所有跳转指令指向目标标签的，改为指向当前块标签
+            updateJumpTargets(blocks, targetLabel, blkLabel);
+
+            toRemove.insert(target);
+        }
+    }
+
+    // 删除合并块
+    blocks.erase(
+        std::remove_if(blocks.begin(), blocks.end(),
+            [&](const std::shared_ptr<BasicBlock>& b) { return toRemove.count(b); }),
+        blocks.end()
+    );
+
+    // Step 3: 删除多余跳转，且同步更新 successors
+    for (size_t i = 0; i + 1 < blocks.size(); ++i) {
+        auto& blk = blocks[i];
+        if (blk->instructions.empty()) continue;
+
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            auto& nextBlk = blocks[i + 1];
+            if (nextBlk->instructions.empty()) continue;
+
+            auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(nextBlk->instructions.front());
+            if (!labelInstr) continue;
+
+            if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
+                // 删除跳转指令
+                blk->instructions.pop_back();
+
+                // 【修改点】同步删除 successors 中的 nextBlk
+                blk->successors.erase(
+                    std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
+                    blk->successors.end()
+                );
+            }
+        }
+    }
+
+    // Step 4: 重新线性化指令，优先fall-through后继
+    instructions.clear();
+    std::unordered_set<std::shared_ptr<BasicBlock>> visited;
+
+    std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
+        if (!blk || visited.count(blk)) return;
+        visited.insert(blk);
+
+        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
+
+        // 找fall-through后继（非跳转目标）
+        std::shared_ptr<BasicBlock> fallthrough = nullptr;
+        if (!blk->instructions.empty()) {
+            auto lastInstr = blk->instructions.back();
+            if (std::dynamic_pointer_cast<GotoInstr>(lastInstr) || std::dynamic_pointer_cast<ReturnInstr>(lastInstr)) {
+                fallthrough = nullptr; // 无fall-through
+            } else if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
+                if (blk->successors.size() > 1) fallthrough = blk->successors[1];
+            } else {
+                if (blk->successors.size() == 1) fallthrough = blk->successors[0];
+            }
+        }
+
+        if (fallthrough) dfsLinearize(fallthrough);
+        for (auto& succ : blk->successors) {
+            if (succ != fallthrough) dfsLinearize(succ);
+        }
+    };
+
+    dfsLinearize(blocks.front());
+
+    // Step 5: 最后校验CFG有效性，避免标签或跳转错误
+    if (!validateCFG(blocks)) {
+        std::cerr << "Error: CFG validation failed after controlFlowOptimization\n";
+        // 这里可考虑回滚或抛异常
+    }
+}
+
 
 
 

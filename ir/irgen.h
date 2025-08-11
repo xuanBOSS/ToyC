@@ -199,6 +199,15 @@ private:
    
     // 构建CFG
     void buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks);
+
+    // 更新所有跳转指令目标标签，fromLabel -> toLabel
+    void updateJumpTargets(
+        std::vector<std::shared_ptr<BasicBlock>>& blocks,
+        const std::string& fromLabel,
+        const std::string& toLabel);
+
+    // 校验 CFG 有效性
+    bool validateCFG(const std::vector<std::shared_ptr<BasicBlock>>& blocks);
     
     // 构建控制流图
     //std::map<std::string, BasicBlock> buildControlFlowGraph();
