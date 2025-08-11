@@ -2002,7 +2002,10 @@ void IRGenerator::controlFlowOptimization() {
 
     // Step 4: 重新线性化指令，优先fall-through后继
     instructions.clear();   // 清空最终的指令序列，准备重新生成
-    std::unordered_set<std::shared_ptr<BasicBlock>> visited;
+    for (auto& block : blocks) {
+        instructions.insert(instructions.end(), block->instructions.begin(), block->instructions.end());
+    }
+    /*std::unordered_set<std::shared_ptr<BasicBlock>> visited;
 
     // 定义深度优先搜索（DFS）函数，用于线性化基本块
     std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
@@ -2044,7 +2047,7 @@ void IRGenerator::controlFlowOptimization() {
     };
 
     // 从入口基本块开始线性化
-    dfsLinearize(entry);
+    dfsLinearize(entry);*/
 
     // Step 5: 最后校验CFG有效性，避免标签或跳转错误
     if (!validateCFG(blocks)) {
