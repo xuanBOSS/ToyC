@@ -1775,7 +1775,7 @@ bool IRGenerator::validateCFG(const std::vector<std::shared_ptr<BasicBlock>>& bl
 
 void IRGenerator::controlFlowOptimization() {
     // 构建基本块和CFG
-    auto blocks = buildBasicBlocks();
+    /*auto blocks = buildBasicBlocks();
     buildCFG(blocks);
     if (blocks.empty()) return;
 
@@ -1924,7 +1924,7 @@ void IRGenerator::controlFlowOptimization() {
     if (!validateCFG(blocks)) {
         std::cerr << "Error: CFG validation failed after controlFlowOptimization\n";
         // 这里可考虑回滚或抛异常
-    }
+    }*/
 }
 
 
