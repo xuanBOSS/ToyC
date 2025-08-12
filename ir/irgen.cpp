@@ -1783,7 +1783,7 @@ CopyMap meetCopyMaps(const CopyMap& a, const CopyMap& b) {
 }
 
 // 迁移函数：根据指令更新 CopyMap
-void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
+/*void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
 
     // 简化：只处理简单赋值 instr: x = y
     if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
@@ -1804,7 +1804,63 @@ void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
             env.erase(d);
         }
     }
+}*/
+void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        auto defVar = assign->target->name;
+
+        if (assign->isSimpleCopy()) {
+            auto srcVar = assign->source->name;
+
+            // 1. 删除所有映射中指向 defVar 的条目（防止旧映射失效后残留）
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == defVar) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // 2. 检查是否会产生映射环（比如 srcVar 最终映射回 defVar）
+            std::string cur = srcVar;
+            while (env.find(cur) != env.end()) {
+                cur = env[cur];
+                if (cur == defVar) {
+                    // 发现环路，不能建立映射，直接清理 defVar
+                    env.erase(defVar);
+                    return;
+                }
+            }
+
+            // 3. 更新映射
+            env[defVar] = srcVar;
+        } else {
+            // 非简单复制，变量重新定义，删除 defVar 及指向 defVar 的映射
+            env.erase(defVar);
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == defVar) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    } else {
+        // 对于其它指令，删除所有定义变量对应的映射以及指向它们的映射
+        auto defs = IRAnalyzer::getDefinedVariables(instr);
+        for (auto& d : defs) {
+            env.erase(d);
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == d) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    }
 }
+
 
 // 替换指令中使用变量，根据 CopyMap 做替换
 void replaceCopyUses(std::shared_ptr<IRInstr>& instr, const CopyMap& env) {
