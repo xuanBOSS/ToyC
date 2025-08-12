@@ -1194,13 +1194,25 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
             }
             else if (auto call = std::dynamic_pointer_cast<CallInstr>(last)) {
                 // 1. 连接到被调函数入口（如果解析到）
-                auto it = functionLabelToBlock.find(call->funcName);
+                /*auto it = functionLabelToBlock.find(call->funcName);
                 if (it != functionLabelToBlock.end()) succSet.insert(it->second);
 
                 // 2. 如果调用会返回，记录返回点（但是不要在此刻把调用块直接连到返回点）
                 if (i + 1 < blocks.size()) {
                     // 记录：被调函数名 -> 返回点（调用之后的块）
                     callReturnSites[call->funcName].push_back(blocks[i + 1]);
+                }
+
+                // 3. 保证顺序连接存在
+                if (i + 1 < blocks.size()) {
+                    succSet.insert(blocks[i + 1]); 
+                    callReturnSites[call->funcName].push_back(blocks[i + 1]);
+                }*/
+
+                // 对于函数内分析，不去连接到被调函数
+                // 只顺序连接到下一个块（如果有）
+                if (i + 1 < (int)blocks.size()) {
+                    succSet.insert(blocks[i + 1]);
                 }
             } 
             else if (!std::dynamic_pointer_cast<ReturnInstr>(last)) {
@@ -1213,7 +1225,7 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
     }
 
     //  在所有函数都处理完后：把被调函数的 return 块统一连回所有调用点的返回点
-    for (auto &kv : callReturnSites) {
+    /*for (auto &kv : callReturnSites) {
         const std::string &callee = kv.first;
         const auto &returnSites = kv.second; // 所有调用该 callee 的返回点块
 
@@ -1230,7 +1242,7 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
             }
             retBlk->successors.assign(succSet.begin(), succSet.end());
         }
-    }
+    }*/
 
     // 填充 predecessors
     for (auto& b : blocks) {
@@ -1336,6 +1348,7 @@ void IRGenerator::constantPropagationCFG() {
     //    这里需要一个 BlockID -> BasicBlock 映射方便访问
     std::unordered_map<int, IRGenerator::BasicBlock> blocksMap;
     for (auto& b : blocks) blocksMap[b->id] = *b;
+    
 
     // 循环入口块ID -> 循环内所有定义变量集合
     std::unordered_map<int, std::unordered_set<std::string>> loopDefs;
@@ -1377,16 +1390,16 @@ void IRGenerator::constantPropagationCFG() {
         // 计算 inMap[bid]
         // in[bid] = meet(out[pred]) for all predecessors
         if (blk->predecessors.empty()) {
-            inMap[bid] = ConstMap{};
+            inMap[bid].clear();
         } else {
             ConstMap accum;
             bool first = true;
             for (auto& p : blk->predecessors) {
                 if (first) {
-                    accum = outMap[p->id];  // 初始化为第一个前驱的状态
+                    accum = outMap[p->id];
                     first = false;
                 } else {
-                    accum = meetMaps(accum, outMap[p->id]); // 合并其他前驱的状态
+                    accum = meetMaps(accum, outMap[p->id]);
                 }
             }
 
@@ -1397,6 +1410,7 @@ void IRGenerator::constantPropagationCFG() {
 
             inMap[bid] = accum;
         }
+
 
         // 计算 outMap[bid]
         // out = transfer(in, block.instructions)
