@@ -413,7 +413,7 @@ void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
-    //deadCodeElimination();    // 删除无效果的代码
+    deadCodeElimination();    // 删除无效果的代码
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
@@ -1548,6 +1548,71 @@ void IRGenerator::deadCodeElimination() {
     }
 
 
+    // -----------------------------
+    // MODIFIED: 先计算 SCC（Tarjan），以便识别循环与循环出口
+    // -----------------------------
+    /* MODIFIED START */
+    // Tarjan SCC implementation
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> indexMap;
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> lowlink;
+    std::unordered_set<std::shared_ptr<BasicBlock>> onStack;
+    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;
+    int indexCounter = 0;
+    std::vector<std::vector<std::shared_ptr<BasicBlock>>> sccList;
+
+    std::function<void(std::shared_ptr<BasicBlock>)> tarjan = [&](std::shared_ptr<BasicBlock> v) {
+        indexMap[v] = ++indexCounter;
+        lowlink[v] = indexMap[v];
+        tarjanStack.push(v);
+        onStack.insert(v);
+
+        for (auto w : v->successors) {
+            if (!indexMap.count(w)) {
+                tarjan(w);
+                lowlink[v] = std::min(lowlink[v], lowlink[w]);
+            } else if (onStack.count(w)) {
+                lowlink[v] = std::min(lowlink[v], indexMap[w]);
+            }
+        }
+
+        if (lowlink[v] == indexMap[v]) {
+            std::vector<std::shared_ptr<BasicBlock>> scc;
+            while (!tarjanStack.empty()) {
+                auto w = tarjanStack.top();
+                tarjanStack.pop();
+                onStack.erase(w);
+                scc.push_back(w);
+                if (w == v) break;
+            }
+            sccList.push_back(std::move(scc));
+        }
+    };
+
+    for (auto& b : basicBlocks) {
+        if (!indexMap.count(b)) tarjan(b);
+    }
+
+    // map block -> scc id
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> blockToScc;
+    for (int i = 0; i < (int)sccList.size(); ++i) {
+        for (auto& b : sccList[i]) blockToScc[b] = i;
+    }
+
+    // Precompute for each scc the set of exit blocks (successors not in this scc)
+    std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
+    for (int i = 0; i < (int)sccList.size(); ++i) {
+        for (auto& b : sccList[i]) {
+            for (auto& succ : b->successors) {
+                if (blockToScc[succ] != i) {
+                    sccExitBlocks[i].insert(succ);
+                }
+            }
+        }
+    }
+    /* MODIFIED END */
+    // -----------------------------
+
+
     // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
 
@@ -1566,9 +1631,36 @@ void IRGenerator::deadCodeElimination() {
 
         // live_out = 后继的 live_in 并集
         std::unordered_set<std::string> new_live_out;
-        for (auto succ : block->successors) {
+        /*for (auto succ : block->successors) {
             new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+        }*/
+       // -----------------------------
+        // MODIFIED: 回边/循环内部处理 —— 如果某条边属于同一 SCC（即循环内部的边），
+        //           则把该 SCC 的所有出口块的 live_in 合并进来（保证循环外使用传播回循环体）
+        // -----------------------------
+        /* MODIFIED START */
+        int thisScc = -1;
+        if (blockToScc.count(block)) thisScc = blockToScc[block];
+
+        for (auto succ : block->successors) {
+            int succScc = -1;
+            if (blockToScc.count(succ)) succScc = blockToScc[succ];
+
+            if (thisScc != -1 && succScc == thisScc) {
+                // 边属于同一 SCC —— 可能是回边或 SCC 内部边
+                // 将该 SCC 的所有出口块的 live_in 注入 new_live_out
+                for (auto exitBlk : sccExitBlocks[thisScc]) {
+                    new_live_out.insert(live_in[exitBlk].begin(), live_in[exitBlk].end());
+                }
+                // 同时也可以合并 succ 本身的 live_in（保险起见）
+                new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+            } else {
+                // 普通边（跨 SCC）
+                new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+            }
         }
+        /* MODIFIED END */
+        // -----------------------------
 
         // live_in = use ∪ (live_out - def)
         std::unordered_set<std::string> new_live_in = use[block];
