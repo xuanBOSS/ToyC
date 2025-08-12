@@ -1822,11 +1822,28 @@ void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
             }
 
             // 2. 检查是否会产生映射环（比如 srcVar 最终映射回 defVar）
-            std::string cur = srcVar;
+            /*std::string cur = srcVar;
             while (env.find(cur) != env.end()) {
                 cur = env[cur];
                 if (cur == defVar) {
                     // 发现环路，不能建立映射，直接清理 defVar
+                    env.erase(defVar);
+                    return;
+                }
+            }*/
+            // === 修改点1：映射环检测改用访问集合防止死循环 ===
+            std::unordered_set<std::string> visited;   // 记录访问过的变量
+            std::string cur = srcVar;
+            while (env.find(cur) != env.end()) {
+                if (visited.count(cur)) {
+                    // 访问过，检测到环，停止查找，防止死循环
+                    break;
+                }
+                visited.insert(cur);
+
+                cur = env[cur];
+                if (cur == defVar) {
+                    // 发现环路，不能建立映射，直接清理 defVar 映射，返回
                     env.erase(defVar);
                     return;
                 }
