@@ -414,13 +414,7 @@ void IRGenerator::optimize() {
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
     deadCodeElimination();    // 删除无效果的代码
-    inlineSmallFunctions();     // 内联小函数 - 新增优化
-    controlFlowOptimization(); // 优化控制流（跳转、分支等）
-
-    // 二次优化（内联后可能有更多优化机会）
-    constantFolding();
-    constantPropagationCFG();
-    deadCodeElimination();
+    //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
 /**
@@ -1973,569 +1967,223 @@ bool IRGenerator::validateCFG(const std::vector<std::shared_ptr<BasicBlock>>& bl
     }
     return true;
 }
-//------------------控制流----------------------------
-// void IRGenerator::controlFlowOptimization() {
-//     // 构建基本块和CFG
-//     auto blocks = buildBasicBlocks();
-//     buildCFG(blocks);
-//     if (blocks.empty()) return;
 
-//     // Step 1: 删除不可达基本块
-//     std::unordered_set<std::shared_ptr<BasicBlock>> reachable;      // 存储可达块
-//     std::unordered_set<std::shared_ptr<BasicBlock>> inProgress;                     // 存储正在处理的块，用于检测循环
-
-//     /*std::function<void(std::shared_ptr<BasicBlock>)> dfs =
-//         [&](std::shared_ptr<BasicBlock> blk) {
-//             if (!blk || reachable.count(blk)) return;
-//             reachable.insert(blk);
-//             for (auto& succ : blk->successors) {
-//                 dfs(succ);
-//             }
-//         };*/
-
-//     // 使用安全的DFS遍历，避免循环导致的无限递归
-//     std::function<void(std::shared_ptr<BasicBlock>)> dfs = [&](std::shared_ptr<BasicBlock> blk) {
-//         if (!blk || reachable.count(blk)) return;  // 已访问的块直接返回
-    
-//         // 检测是否在当前DFS路径上（循环检测）
-//         if (inProgress.count(blk)) return;         // 如果当前块正在处理中，直接返回
-    
-//         inProgress.insert(blk);                    // 标记当前块为处理中
-//         reachable.insert(blk);                     // 标记当前块为可达
-    
-//         // 递归处理所有后继块
-//         for (auto succ : blk->successors) {
-//             dfs(succ);
-//         }
-    
-//         inProgress.erase(blk);                     // 处理完成，从处理中集合移除
-//     };
-
-
-//     // 寻找程序入口
-//     std::shared_ptr<BasicBlock> entry = nullptr;
-
-//     for (auto& blk : blocks) {
-//         for (auto& ins : blk->instructions) {
-//             if (auto funcInstr = std::dynamic_pointer_cast<FunctionBeginInstr>(ins)) {
-//                 if (funcInstr->funcName == "main") { 
-//                     entry = blk;
-//                     goto found; // 直接跳出双层循环
-//                 }
-//             }
-//         }
-//     }
-
-//     found:
-//     if (!entry) {
-//         throw std::runtime_error("入口块 'main' 未找到");
-//     }
-
-//     dfs(entry);
-
-//     // 过滤不可达块
-//     std::vector<std::shared_ptr<BasicBlock>> newBlocks;
-//     for (auto& blk : blocks) {
-//         if (reachable.count(blk)) newBlocks.push_back(blk);
-//     }
-//     blocks.swap(newBlocks);
-
-
-//     // Step 2: 合并直连基本块
-//     std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
-
-//     for (auto& blk : blocks) {
-//         if (blk->instructions.empty()) continue;
-
-//         // 必须保证第一个指令是标签
-//         auto firstInstr = blk->instructions.front();
-//         auto blkLabelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr);
-//         if (!blkLabelInstr) continue; // 【修改点】跳过无标签块，确保标签存在
-
-//         // 检查最后一条是否为goto
-//         if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-//             if (blk->successors.size() != 1) continue;
-//             auto target = blk->successors[0];
-//             if (!target || target->instructions.empty()) continue;
-
-//             // 目标块必须只有一个前驱（即当前块）
-//             if (target->predecessors.size() != 1 || target->predecessors[0] != blk) continue;
-
-//             // 目标块第一个指令必须是标签
-//             auto targetLabelInstr = std::dynamic_pointer_cast<LabelInstr>(target->instructions.front());
-//             if (!targetLabelInstr) continue;
-
-//             // 【修改点】合并块前先记录标签名
-//             std::string blkLabel = blkLabelInstr->label;
-//             std::string targetLabel = targetLabelInstr->label;
-
-//             // 【修改点】合并时删除当前块尾部goto
-//             blk->instructions.pop_back();
-
-//             // 【修改点】删除目标块标签指令（保持块唯一标签）
-//             target->instructions.erase(target->instructions.begin());
-
-//             // 合并目标块剩余指令
-//             blk->instructions.insert(
-//                 blk->instructions.end(),
-//                 target->instructions.begin(),
-//                 target->instructions.end()
-//             );
-
-//             // 更新CFG successors
-//             blk->successors = target->successors;
-
-//             // 更新目标块后继的predecessors指向当前块
-//             for (auto& succ : target->successors) {
-//                 for (auto& pred : succ->predecessors) {
-//                     if (pred == target) {
-//                         pred = blk;
-//                     }
-//                 }
-//             }
-
-//             // 【修改点】更新所有跳转指令指向目标标签的，改为指向当前块标签
-//             updateJumpTargets(blocks, targetLabel, blkLabel);
-
-//             toRemove.insert(target);
-//         }
-//     }
-
-//     // 删除合并块
-//     blocks.erase(
-//         std::remove_if(blocks.begin(), blocks.end(),
-//             [&](const std::shared_ptr<BasicBlock>& b) { return toRemove.count(b); }),
-//         blocks.end()
-//     );
-
-//     // Step 3: 删除多余跳转，且同步更新 successors
-//     for (size_t i = 0; i + 1 < blocks.size(); ++i) {
-//         auto& blk = blocks[i];
-//         if (blk->instructions.empty()) continue;
-
-//         if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-//             auto& nextBlk = blocks[i + 1];
-//             if (nextBlk->instructions.empty()) continue;
-
-//             auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(nextBlk->instructions.front());
-//             if (!labelInstr) continue;
-
-//             if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
-//                 // 删除跳转指令
-//                 blk->instructions.pop_back();
-
-//                 // 【修改点】同步删除 successors 中的 nextBlk
-//                 blk->successors.erase(
-//                     std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
-//                     blk->successors.end()
-//                 );
-//             }
-//         }
-//     }
-
-//     // Step 4: 重新线性化指令，优先fall-through后继
-//     instructions.clear();   // 清空最终的指令序列，准备重新生成
-//     for (auto& block : blocks) {
-//         instructions.insert(instructions.end(), block->instructions.begin(), block->instructions.end());
-//     }
-//     /*std::unordered_set<std::shared_ptr<BasicBlock>> visited;
-
-//     // 定义深度优先搜索（DFS）函数，用于线性化基本块
-//     std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
-//         // 如果基本块为空或已访问过，直接返回
-//         if (!blk || visited.count(blk)) return;
-
-//         // 标记当前基本块为已访问
-//         visited.insert(blk);
-
-//         // 将当前基本块的所有指令追加到最终的指令序列中
-//         instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
-
-//         // 找fall-through后继（非跳转目标）
-//         std::shared_ptr<BasicBlock> fallthrough = nullptr;
-//         if (!blk->instructions.empty()) {
-//             auto lastInstr = blk->instructions.back();  // 获取最后一条指令
-
-//             // 如果是 `Goto` 或 `Return`，则没有 fall-through
-//             if (std::dynamic_pointer_cast<GotoInstr>(lastInstr) || std::dynamic_pointer_cast<ReturnInstr>(lastInstr)) {
-//                 fallthrough = nullptr; // 无fall-through
-//             } 
-//             // 如果是 `IfGoto`（条件跳转），则 fall-through 是第二个后继（false 分支）
-//             else if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
-//                 if (blk->successors.size() > 1) fallthrough = blk->successors[1];
-//             } 
-//             // 其他情况（普通指令），fall-through 是唯一后继（如果有的话）
-//             else {
-//                 if (blk->successors.size() == 1) fallthrough = blk->successors[0];
-//             }
-//         }
-
-//         // 优先处理 fall-through 后继（保证顺序执行）
-//         if (fallthrough) dfsLinearize(fallthrough);
-
-//         // 处理其他后继（跳转目标）
-//         for (auto& succ : blk->successors) {
-//             if (succ != fallthrough) dfsLinearize(succ);
-//         }
-//     };
-
-//     // 从入口基本块开始线性化
-//     dfsLinearize(entry);*/
-
-//     // Step 5: 最后校验CFG有效性，避免标签或跳转错误
-//     if (!validateCFG(blocks)) {
-//         std::cerr << "Error: CFG validation failed after controlFlowOptimization\n";
-//         // 这里可考虑回滚或抛异常
-//     }
-// }
 void IRGenerator::controlFlowOptimization() {
     // 构建基本块和CFG
     auto blocks = buildBasicBlocks();
     buildCFG(blocks);
     if (blocks.empty()) return;
 
-    // 为函数映射建立索引
-    std::unordered_map<std::string, std::vector<std::shared_ptr<BasicBlock>>> functionBlocks;
+    // Step 1: 删除不可达基本块
+    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;      // 存储可达块
+    std::unordered_set<std::shared_ptr<BasicBlock>> inProgress;                     // 存储正在处理的块，用于检测循环
+
+    /*std::function<void(std::shared_ptr<BasicBlock>)> dfs =
+        [&](std::shared_ptr<BasicBlock> blk) {
+            if (!blk || reachable.count(blk)) return;
+            reachable.insert(blk);
+            for (auto& succ : blk->successors) {
+                dfs(succ);
+            }
+        };*/
+
+    // 使用安全的DFS遍历，避免循环导致的无限递归
+    std::function<void(std::shared_ptr<BasicBlock>)> dfs = [&](std::shared_ptr<BasicBlock> blk) {
+        if (!blk || reachable.count(blk)) return;  // 已访问的块直接返回
+    
+        // 检测是否在当前DFS路径上（循环检测）
+        if (inProgress.count(blk)) return;         // 如果当前块正在处理中，直接返回
+    
+        inProgress.insert(blk);                    // 标记当前块为处理中
+        reachable.insert(blk);                     // 标记当前块为可达
+    
+        // 递归处理所有后继块
+        for (auto succ : blk->successors) {
+            dfs(succ);
+        }
+    
+        inProgress.erase(blk);                     // 处理完成，从处理中集合移除
+    };
+
+
+    // 寻找程序入口
+    std::shared_ptr<BasicBlock> entry = nullptr;
+
+    for (auto& blk : blocks) {
+        for (auto& ins : blk->instructions) {
+            if (auto funcInstr = std::dynamic_pointer_cast<FunctionBeginInstr>(ins)) {
+                if (funcInstr->funcName == "main") { 
+                    entry = blk;
+                    goto found; // 直接跳出双层循环
+                }
+            }
+        }
+    }
+
+    found:
+    if (!entry) {
+        throw std::runtime_error("入口块 'main' 未找到");
+    }
+
+    dfs(entry);
+
+    // 过滤不可达块
+    std::vector<std::shared_ptr<BasicBlock>> newBlocks;
+    for (auto& blk : blocks) {
+        if (reachable.count(blk)) newBlocks.push_back(blk);
+    }
+    blocks.swap(newBlocks);
+
+
+    // Step 2: 合并直连基本块
+    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
+
+    for (auto& blk : blocks) {
+        if (blk->instructions.empty()) continue;
+
+        // 必须保证第一个指令是标签
+        auto firstInstr = blk->instructions.front();
+        auto blkLabelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr);
+        if (!blkLabelInstr) continue; // 【修改点】跳过无标签块，确保标签存在
+
+        // 检查最后一条是否为goto
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            if (blk->successors.size() != 1) continue;
+            auto target = blk->successors[0];
+            if (!target || target->instructions.empty()) continue;
+
+            // 目标块必须只有一个前驱（即当前块）
+            if (target->predecessors.size() != 1 || target->predecessors[0] != blk) continue;
+
+            // 目标块第一个指令必须是标签
+            auto targetLabelInstr = std::dynamic_pointer_cast<LabelInstr>(target->instructions.front());
+            if (!targetLabelInstr) continue;
+
+            // 【修改点】合并块前先记录标签名
+            std::string blkLabel = blkLabelInstr->label;
+            std::string targetLabel = targetLabelInstr->label;
+
+            // 【修改点】合并时删除当前块尾部goto
+            blk->instructions.pop_back();
+
+            // 【修改点】删除目标块标签指令（保持块唯一标签）
+            target->instructions.erase(target->instructions.begin());
+
+            // 合并目标块剩余指令
+            blk->instructions.insert(
+                blk->instructions.end(),
+                target->instructions.begin(),
+                target->instructions.end()
+            );
+
+            // 更新CFG successors
+            blk->successors = target->successors;
+
+            // 更新目标块后继的predecessors指向当前块
+            for (auto& succ : target->successors) {
+                for (auto& pred : succ->predecessors) {
+                    if (pred == target) {
+                        pred = blk;
+                    }
+                }
+            }
+
+            // 【修改点】更新所有跳转指令指向目标标签的，改为指向当前块标签
+            updateJumpTargets(blocks, targetLabel, blkLabel);
+
+            toRemove.insert(target);
+        }
+    }
+
+    // 删除合并块
+    blocks.erase(
+        std::remove_if(blocks.begin(), blocks.end(),
+            [&](const std::shared_ptr<BasicBlock>& b) { return toRemove.count(b); }),
+        blocks.end()
+    );
+
+    // Step 3: 删除多余跳转，且同步更新 successors
+    for (size_t i = 0; i + 1 < blocks.size(); ++i) {
+        auto& blk = blocks[i];
+        if (blk->instructions.empty()) continue;
+
+        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
+            auto& nextBlk = blocks[i + 1];
+            if (nextBlk->instructions.empty()) continue;
+
+            auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(nextBlk->instructions.front());
+            if (!labelInstr) continue;
+
+            if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
+                // 删除跳转指令
+                blk->instructions.pop_back();
+
+                // 【修改点】同步删除 successors 中的 nextBlk
+                blk->successors.erase(
+                    std::remove(blk->successors.begin(), blk->successors.end(), nextBlk),
+                    blk->successors.end()
+                );
+            }
+        }
+    }
+
+    // Step 4: 重新线性化指令，优先fall-through后继
+    instructions.clear();   // 清空最终的指令序列，准备重新生成
     for (auto& block : blocks) {
-        if (!block->functionName.empty()) {
-            functionBlocks[block->functionName].push_back(block);
-        }
+        instructions.insert(instructions.end(), block->instructions.begin(), block->instructions.end());
     }
+    /*std::unordered_set<std::shared_ptr<BasicBlock>> visited;
 
-    // 执行多次优化迭代
-    const int MAX_ITERATIONS = 3;
-    bool changed = true;
-    int iteration = 0;
+    // 定义深度优先搜索（DFS）函数，用于线性化基本块
+    std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
+        // 如果基本块为空或已访问过，直接返回
+        if (!blk || visited.count(blk)) return;
 
-    while (changed && iteration < MAX_ITERATIONS) {
-        changed = false;
-        iteration++;
+        // 标记当前基本块为已访问
+        visited.insert(blk);
 
-        // Step 1: 删除不可达基本块
-        std::unordered_set<std::shared_ptr<BasicBlock>> reachable;
-        std::unordered_set<std::shared_ptr<BasicBlock>> inProgress;
+        // 将当前基本块的所有指令追加到最终的指令序列中
+        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
 
-        // 为每个函数的入口块执行DFS
-        for (auto& [funcName, funcBlocks] : functionBlocks) {
-            if (funcBlocks.empty()) continue;
-            
-            // 找到函数入口块（通常是第一个块）
-            auto entryBlock = funcBlocks[0];
-            
-            // 使用更强大的DFS遍历，避免循环导致的问题
-            std::function<void(std::shared_ptr<BasicBlock>)> dfs = 
-                [&](std::shared_ptr<BasicBlock> blk) {
-                    if (!blk || reachable.count(blk)) return;
-                    if (inProgress.count(blk)) return; // 检测循环
-                    
-                    inProgress.insert(blk);
-                    reachable.insert(blk);
-                    
-                    // 递归处理所有后继块
-                    for (auto succ : blk->successors) {
-                        // 只在同一函数内遍历（避免跨函数分析问题）
-                        if (succ->functionName == blk->functionName) {
-                            dfs(succ);
-                        }
-                    }
-                    
-                    inProgress.erase(blk);
-                };
-            
-            dfs(entryBlock);
-        }
+        // 找fall-through后继（非跳转目标）
+        std::shared_ptr<BasicBlock> fallthrough = nullptr;
+        if (!blk->instructions.empty()) {
+            auto lastInstr = blk->instructions.back();  // 获取最后一条指令
 
-        // 过滤不可达块
-        auto oldSize = blocks.size();
-        blocks.erase(
-            std::remove_if(blocks.begin(), blocks.end(),
-                [&](const std::shared_ptr<BasicBlock>& b) { 
-                    return !reachable.count(b); 
-                }),
-            blocks.end());
-        
-        if (blocks.size() < oldSize) {
-            changed = true;
-            // 更新CFG以反映删除的块
-            buildCFG(blocks);
-        }
-
-        // Step 2: 常量条件优化
-        for (auto& block : blocks) {
-            if (block->instructions.empty()) continue;
-            
-            auto lastInstr = block->instructions.back();
-            
-            // 处理条件跳转
-            if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
-                if (ifGoto->condition->type == OperandType::CONSTANT) {
-                    if (ifGoto->condition->value != 0) {
-                        // 条件始终为真，替换为无条件跳转
-                        block->instructions.pop_back();
-                        block->instructions.push_back(std::make_shared<GotoInstr>(ifGoto->target));
-                        changed = true;
-                    } else {
-                        // 条件始终为假，删除跳转
-                        block->instructions.pop_back();
-                        changed = true;
-                    }
-                    
-                    // 更新CFG
-                    buildCFG(blocks);
-                }
+            // 如果是 `Goto` 或 `Return`，则没有 fall-through
+            if (std::dynamic_pointer_cast<GotoInstr>(lastInstr) || std::dynamic_pointer_cast<ReturnInstr>(lastInstr)) {
+                fallthrough = nullptr; // 无fall-through
+            } 
+            // 如果是 `IfGoto`（条件跳转），则 fall-through 是第二个后继（false 分支）
+            else if (auto ifGoto = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
+                if (blk->successors.size() > 1) fallthrough = blk->successors[1];
+            } 
+            // 其他情况（普通指令），fall-through 是唯一后继（如果有的话）
+            else {
+                if (blk->successors.size() == 1) fallthrough = blk->successors[0];
             }
         }
 
-        // Step 3: 合并直连基本块
-        std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;
+        // 优先处理 fall-through 后继（保证顺序执行）
+        if (fallthrough) dfsLinearize(fallthrough);
 
-        for (auto& block : blocks) {
-            if (block->instructions.empty()) continue;
-            
-            // 检查是否以goto结尾
-            auto lastInstr = block->instructions.back();
-            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(lastInstr)) {
-                // 找到目标块
-                std::shared_ptr<BasicBlock> targetBlock = nullptr;
-                for (auto& succ : block->successors) {
-                    if (!succ->instructions.empty() && 
-                        std::dynamic_pointer_cast<LabelInstr>(succ->instructions.front()) &&
-                        std::dynamic_pointer_cast<LabelInstr>(succ->instructions.front())->label == gotoInstr->target->name) {
-                        targetBlock = succ;
-                        break;
-                    }
-                }
-                
-                // 如果找到目标块且目标块只有一个前驱（当前块）
-                if (targetBlock && targetBlock->predecessors.size() == 1 && 
-                    targetBlock->predecessors[0] == block &&
-                    targetBlock->functionName == block->functionName) {  // 确保在同一函数内
-                    
-                    // 移除当前块的goto
-                    block->instructions.pop_back();
-                    
-                    // 跳过目标块的标签
-                    auto targetInstructions = targetBlock->instructions;
-                    if (!targetInstructions.empty() && 
-                        std::dynamic_pointer_cast<LabelInstr>(targetInstructions.front())) {
-                        targetInstructions.erase(targetInstructions.begin());
-                    }
-                    
-                    // 合并目标块指令到当前块
-                    block->instructions.insert(
-                        block->instructions.end(),
-                        targetInstructions.begin(),
-                        targetInstructions.end());
-                    
-                    // 更新后继
-                    block->successors = targetBlock->successors;
-                    
-                    // 标记目标块待删除
-                    toRemove.insert(targetBlock);
-                    changed = true;
-                }
-            }
+        // 处理其他后继（跳转目标）
+        for (auto& succ : blk->successors) {
+            if (succ != fallthrough) dfsLinearize(succ);
         }
+    };
 
-        // 删除被合并的块
-        if (!toRemove.empty()) {
-            blocks.erase(
-                std::remove_if(blocks.begin(), blocks.end(),
-                    [&](const std::shared_ptr<BasicBlock>& b) { 
-                        return toRemove.count(b); 
-                    }),
-                blocks.end());
-            
-            // 更新CFG
-            buildCFG(blocks);
-        }
+    // 从入口基本块开始线性化
+    dfsLinearize(entry);*/
 
-        // Step 4: 删除冗余跳转
-        for (size_t i = 0; i < blocks.size() - 1; ++i) {
-            auto& block = blocks[i];
-            auto& nextBlock = blocks[i + 1];
-            
-            if (block->instructions.empty() || nextBlock->instructions.empty()) continue;
-            
-            // 检查当前块是否以goto结尾且目标是下一个块
-            auto lastInstr = block->instructions.back();
-            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(lastInstr)) {
-                auto firstInstrNext = nextBlock->instructions.front();
-                if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstrNext)) {
-                    if (gotoInstr->target->name == labelInstr->label) {
-                        // 删除冗余跳转
-                        block->instructions.pop_back();
-                        changed = true;
-                    }
-                }
-            }
-        }
-    }
-
-    // 最终重建线性化指令序列
-    instructions.clear();
-    for (auto& block : blocks) {
-        for (auto& instr : block->instructions) {
-            instructions.push_back(instr);
-        }
-    }
-
-    // 验证结果的CFG有效性
+    // Step 5: 最后校验CFG有效性，避免标签或跳转错误
     if (!validateCFG(blocks)) {
-        std::cerr << "Warning: CFG validation failed after control flow optimization" << std::endl;
+        std::cerr << "Error: CFG validation failed after controlFlowOptimization\n";
+        // 这里可考虑回滚或抛异常
     }
 }
-void IRGenerator::inlineSmallFunctions() {
-    if (!config.inlineSmallFunctions) return;
-    
-    // 映射函数名到其定义
-    std::unordered_map<std::string, std::pair<int, int>> functionDefs; // 函数名 -> (开始, 结束)
-    
-    // 记录函数定义的位置
-    for (int i = 0; i < instructions.size(); ++i) {
-        auto instr = instructions[i];
-        if (auto funcBegin = std::dynamic_pointer_cast<FunctionBeginInstr>(instr)) {
-            functionDefs[funcBegin->funcName].first = i;
-        }
-        else if (auto funcEnd = std::dynamic_pointer_cast<FunctionEndInstr>(instr)) {
-            functionDefs[funcEnd->funcName].second = i;
-        }
-    }
-    
-    // 查找是否有小函数可内联(不超过20条指令)
-    std::unordered_set<std::string> inlineCandidates;
-    for (const auto& [funcName, range] : functionDefs) {
-        if (funcName == "main") continue; // 不内联main函数
-        
-        int start = range.first;
-        int end = range.second;
-        
-        // 计算函数指令数
-        int instrCount = 0;
-        for (int i = start + 1; i < end; ++i) {
-            if (!std::dynamic_pointer_cast<LabelInstr>(instructions[i])) {
-                instrCount++;
-            }
-        }
-        
-        // 判断是否是小函数
-        if (instrCount <= 20) {
-            inlineCandidates.insert(funcName);
-        }
-    }
-    
-    // 没有可内联的函数
-    if (inlineCandidates.empty()) return;
-    
-    // 查找所有函数调用并内联小函数
-    std::vector<std::shared_ptr<IRInstr>> newInstructions;
-    int paramCount = 0;
-    std::vector<std::shared_ptr<Operand>> params;
-    
-    for (int i = 0; i < instructions.size(); ++i) {
-        auto instr = instructions[i];
-        
-        if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
-            paramCount++;
-            params.push_back(paramInstr->param);
-            continue; // 不添加参数指令，等待处理调用
-        }
-        
-        if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
-            std::string calleeName = callInstr->funcName;
-            
-            // 检查是否是内联候选
-            if (inlineCandidates.count(calleeName) && 
-                functionDefs.count(calleeName)) {
-                
-                // 获取函数定义范围
-                int funcStart = functionDefs[calleeName].first;
-                int funcEnd = functionDefs[calleeName].second;
-                
-                // 生成内联代码
-                std::vector<std::shared_ptr<IRInstr>> inlinedCode;
-                
-                // 创建参数映射（将形参映射到实参）
-                std::unordered_map<std::string, std::shared_ptr<Operand>> paramMap;
-                
-                // 获取函数参数列表
-                auto funcBegin = std::dynamic_pointer_cast<FunctionBeginInstr>(instructions[funcStart]);
-                
-                // 确保参数数量匹配
-                if (funcBegin && funcBegin->paramNames.size() == paramCount) {
-                    for (int j = 0; j < paramCount; ++j) {
-                        paramMap[funcBegin->paramNames[j]] = params[j];
-                    }
-                    
-                    // 生成唯一的返回标签
-                    std::string returnLabel = "inline_return_" + std::to_string(labelCount++);
-                    
-                    // 克隆函数体，替换参数和返回
-                    for (int j = funcStart + 1; j < funcEnd; ++j) {
-                        auto funcInstr = instructions[j];
-                        
-                        // 跳过函数结束指令
-                        if (std::dynamic_pointer_cast<FunctionEndInstr>(funcInstr)) {
-                            continue;
-                        }
-                        
-                        // 处理返回指令
-                        if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(funcInstr)) {
-                            if (returnInstr->value && callInstr->result) {
-                                // 创建赋值给调用结果的指令
-                                inlinedCode.push_back(std::make_shared<AssignInstr>(
-                                    callInstr->result, returnInstr->value));
-                            }
-                            // 跳转到内联后的返回点
-                            inlinedCode.push_back(std::make_shared<GotoInstr>(
-                                std::make_shared<Operand>(OperandType::LABEL, returnLabel)));
-                            continue;
-                        }
-                        
-                        // 其他指令：克隆并替换参数
-                        // (此处应有更复杂的参数替换逻辑，但为了简洁，省略)
-                        inlinedCode.push_back(funcInstr);
-                    }
-                    
-                    // 添加返回标签
-                    inlinedCode.push_back(std::make_shared<LabelInstr>(returnLabel));
-                    
-                    // 将内联代码添加到新指令列表
-                    newInstructions.insert(newInstructions.end(), inlinedCode.begin(), inlinedCode.end());
-                    
-                    // 重置参数计数和参数列表
-                    paramCount = 0;
-                    params.clear();
-                    continue; // 跳过原调用指令
-                }
-            }
-            
-            // 如果不能内联，添加原参数指令和调用指令
-            for (int j = 0; j < paramCount; ++j) {
-                newInstructions.push_back(std::make_shared<ParamInstr>(params[j]));
-            }
-            newInstructions.push_back(callInstr);
-            
-            // 重置参数计数和参数列表
-            paramCount = 0;
-            params.clear();
-            continue;
-        }
-        
-        // 添加其他指令
-        newInstructions.push_back(instr);
-    }
-    
-    // 替换指令列表
-    if (newInstructions.size() != instructions.size()) {
-        instructions = std::move(newInstructions);
-        
-        // 重新应用其他优化
-        constantFolding();
-        constantPropagationCFG();
-        deadCodeElimination();
-    }
-}
+
+
 
 
 
