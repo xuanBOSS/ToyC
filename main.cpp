@@ -89,6 +89,7 @@ int main(int argc, char* argv[]) {
     if(enableOptimization) {
         // 启用优化选项
         irConfig.enableOptimizations = true;
+        irConfig.inlineSmallFunctions=true;
     }
     
     // IR生成

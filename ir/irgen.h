@@ -224,6 +224,9 @@ private:
 
     // 记录函数被使用
     void markFunctionAsUsed(const std::string& funcName);
+
+    
+    void inlineSmallFunctions();    // 内联小函数
 };
 
 // IR优化器接口
