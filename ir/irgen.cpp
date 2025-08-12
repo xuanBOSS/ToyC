@@ -1883,6 +1883,55 @@ void IRAnalyzer::replaceUsedVariable(std::shared_ptr<IRInstr>& instr,
     }
 }
 
+// ---------- 构建基本块（仅用标签划分） ----------
+std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlocksByLabel() {
+    std::vector<std::shared_ptr<BasicBlock>> blocks;    // 存储生成的基本块
+    const auto& instrs = this->instructions; 
+
+    // 1. 收集所有标签指令的索引
+    std::vector<int> labelIndices;
+    for (int i = 0; i < (int)instrs.size(); ++i) {
+        if (std::dynamic_pointer_cast<LabelInstr>(instrs[i])) {
+            labelIndices.push_back(i);
+        }
+    }
+
+    // 2. 如果没有标签，强制第0条指令作为起点
+    if (labelIndices.empty() && !instrs.empty()) {
+        labelIndices.push_back(0);
+    }
+
+    // 3. 根据标签划分基本块
+    for (int i = 0; i < (int)labelIndices.size(); ++i) {
+        int start = labelIndices[i];
+        int end = (i + 1 < (int)labelIndices.size()) ? labelIndices[i+1] - 1 : (int)instrs.size() - 1;
+
+        auto block = std::make_shared<BasicBlock>();
+        block->id = (int)blocks.size();
+
+        for (int k = start; k <= end; ++k) {
+            block->instructions.push_back(instrs[k]);
+        }
+
+        // 块第一条指令必为标签
+        auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
+        if (lbl) {
+            block->label = lbl->label;
+        } else {
+            // 如果第一条不是标签，生成新标签并插入
+            std::string newLabel = "__block" + std::to_string(block->id);
+            auto lblInstr = std::make_shared<LabelInstr>(newLabel);
+            block->instructions.insert(block->instructions.begin(), lblInstr);
+            block->label = newLabel;
+        }
+
+        blocks.push_back(block);
+    }
+
+    return blocks;
+}
+
+
 
 /**
  * 执行基于控制流图(CFG)的复制传播优化(Copy Propagation)
@@ -1893,7 +1942,7 @@ void IRAnalyzer::replaceUsedVariable(std::shared_ptr<IRInstr>& instr,
  */
 void IRGenerator::copyPropagationCFG() {
     // ========== Step 1: 构建CFG ==========
-    auto blocks = buildBasicBlocks();
+    auto blocks = buildBasicBlocksByLabel();
     buildCFG(blocks);
 
     int n = (int)blocks.size();

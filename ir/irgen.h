@@ -184,6 +184,9 @@ private:
     // 构建基本快
     std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();
 
+    // 执复制传播时仅通过标签划分基本块
+    std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocksByLabel();
+
     // 获取循环体内定义的所有变量集合（循环定义变量分析）
     /*std::unordered_set<std::string> getLoopDefs(
         const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
