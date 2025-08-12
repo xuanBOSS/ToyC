@@ -414,6 +414,7 @@ void IRGenerator::optimize() {
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
     deadCodeElimination();    // 删除无效果的代码
+    copyPropagationCFG();       // 复制传播优化
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
@@ -1763,6 +1764,220 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
         std::dynamic_pointer_cast<FunctionBeginInstr>(instr) != nullptr ||      // 函数开始
         std::dynamic_pointer_cast<FunctionEndInstr>(instr) != nullptr ||        // 函数结束
         std::dynamic_pointer_cast<ParamInstr>(instr) != nullptr;                // 参数传递
+}
+
+// 复制传播优化实现
+// 复制传播状态类型：变量到变量的映射
+using CopyMap = std::unordered_map<std::string, std::string>;
+
+// 合并两个 CopyMap：求交集，只有两边相同映射保留
+CopyMap meetCopyMaps(const CopyMap& a, const CopyMap& b) {
+    CopyMap result;
+    for (auto& [var, mappedVar] : a) {
+        auto it = b.find(var);
+        if (it != b.end() && it->second == mappedVar) {
+            result[var] = mappedVar;
+        }
+    }
+    return result;
+}
+
+// 迁移函数：根据指令更新 CopyMap
+void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
+
+    // 简化：只处理简单赋值 instr: x = y
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        auto defVar = assign->target->name;
+        // 如果赋值是简单复制
+        if (assign->isSimpleCopy()) { // 你需要实现判断是否简单复制的接口，比如源操作数是变量而非常量表达式
+            auto srcVar = assign->source->name;
+            env[defVar] = srcVar;
+        } else {
+            // 非复制赋值，变量重新定义，去除之前映射
+            env.erase(defVar);
+            // 这里简化不处理映射链中其他变量映射到defVar的情况
+        }
+    } else {
+        // 其它指令可能定义变量，需删除对应映射
+        auto defs = IRAnalyzer::getDefinedVariables(instr);
+        for (auto& d : defs) {
+            env.erase(d);
+        }
+    }
+}
+
+// 替换指令中使用变量，根据 CopyMap 做替换
+void replaceCopyUses(std::shared_ptr<IRInstr>& instr, const CopyMap& env) {
+    // 遍历指令所有使用变量，替换成映射变量（递归替换直到不变）
+    auto uses = IRAnalyzer::getUsedVariables(instr);
+    for (auto& useVar : uses) {
+        std::string cur = useVar;
+        while (env.find(cur) != env.end()) {
+            cur = env.at(cur);
+        }
+        IRAnalyzer::replaceUsedVariable(instr, useVar, cur);
+    }
+}
+
+// 在给定指令 instr 中，将所有使用的变量名 useVar 替换为新的变量名 cur
+void IRAnalyzer::replaceUsedVariable(std::shared_ptr<IRInstr>& instr, 
+    const std::string& oldVar, 
+    const std::string& newVar) 
+{
+
+    // 1. 赋值指令
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        if (assign->source->type == OperandType::VARIABLE || assign->source->type == OperandType::TEMP) {
+            if (assign->source->name == oldVar) {
+                assign->source->name = newVar;
+            }
+        }
+    }
+    // 2. 二元运算指令
+    else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+        if ((binOp->left->type == OperandType::VARIABLE || binOp->left->type == OperandType::TEMP) &&
+        binOp->left->name == oldVar) {
+            binOp->left->name = newVar;
+        }
+        if ((binOp->right->type == OperandType::VARIABLE || binOp->right->type == OperandType::TEMP) &&
+        binOp->right->name == oldVar) {
+            binOp->right->name = newVar;
+        }
+    }
+    // 3. 一元运算指令
+    else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+        if ((unaryOp->operand->type == OperandType::VARIABLE || unaryOp->operand->type == OperandType::TEMP) &&
+        unaryOp->operand->name == oldVar) {
+            unaryOp->operand->name = newVar;
+        }
+    }
+    // 4. 参数传递指令
+    else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
+        if ((paramInstr->param->type == OperandType::VARIABLE || paramInstr->param->type == OperandType::TEMP) &&
+        paramInstr->param->name == oldVar) {
+            paramInstr->param->name = newVar;
+        }
+    }
+    // 5. 函数调用指令
+    else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+        for (auto& arg : callInstr->params) {
+            if ((arg->type == OperandType::VARIABLE || arg->type == OperandType::TEMP) &&
+            arg->name == oldVar) {
+                arg->name = newVar;
+            }
+        }
+    }
+    // 6. 条件跳转指令
+    else if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+        if ((ifg->condition->type == OperandType::VARIABLE || ifg->condition->type == OperandType::TEMP) &&
+        ifg->condition->name == oldVar) {
+            ifg->condition->name = newVar;
+        }
+    }
+    // 7. 返回指令
+    else if (auto retInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
+        if (retInstr->value && (retInstr->value->type == OperandType::VARIABLE || retInstr->value->type == OperandType::TEMP) &&
+        retInstr->value->name == oldVar) {
+            retInstr->value->name = newVar;
+        }
+    }
+}
+
+
+/**
+ * 执行基于控制流图(CFG)的复制传播优化(Copy Propagation)
+ * 算法步骤：
+ * 1. 构建基本块和控制流图(CFG)
+ * 2. 使用worklist算法迭代计算每个基本块的in/out拷贝映射
+ * 3. 根据计算结果替换指令中的变量引用
+ */
+void IRGenerator::copyPropagationCFG() {
+    // ========== Step 1: 构建CFG ==========
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    int n = (int)blocks.size();
+    if (n == 0) return;
+
+    // ========== Step 2: 构建CFG的快速访问结构 ==========
+    std::unordered_map<int, std::vector<int>> cfg;  // blockID -> successorIDs
+    for (auto& b : blocks) {
+        std::vector<int> succIds;
+        for (auto& s : b->successors) {
+            succIds.push_back(s->id);   // 记录后继块ID
+        }
+        cfg[b->id] = std::move(succIds);
+    }
+
+    // ========== Step 3: 数据流分析初始化 =========
+    std::vector<CopyMap> inMap(n), outMap(n);   // 每个块的输入/输出拷贝映射
+    std::queue<int> q;                          // worklist队列
+    std::unordered_set<int> inQueue;            // 记录已在队列中的块
+
+    q.push(0); // 假定0为入口
+    inQueue.insert(0);
+
+    // ========== Step 4: 迭代计算in/out集合 ==========
+    while (!q.empty()) {
+        int bid = q.front();
+        q.pop();
+        inQueue.erase(bid);
+        auto blk = blocks[bid];
+
+        // 计算 inMap[bid] = meet(outMap[pred])
+        if (blk->predecessors.empty()) {
+            inMap[bid].clear();
+        } else {
+            CopyMap accum;
+            bool first = true;
+            for (auto& p : blk->predecessors) {
+                if (first) {
+                    accum = outMap[p->id];  // 第一个前驱
+                    first = false;
+                } else {
+                    // meet操作：保留所有前驱共有的拷贝关系
+                    accum = meetCopyMaps(accum, outMap[p->id]);
+                }
+            }
+            inMap[bid] = accum;
+        }
+
+        // 计算 outMap[bid] = transfer(inMap[bid], instructions)
+        CopyMap outEnv = inMap[bid];    // 从inMap初始化
+        for (auto& instr : blk->instructions) {
+            applyCopyTransfer(outEnv, instr);   // 每条指令更新拷贝关系
+        }
+
+        // 如果状态改变，更新 outMap 并加入后继块
+        if (outEnv != outMap[bid]) {
+            outMap[bid] = std::move(outEnv);
+            // 将后继块加入worklist
+            for (auto& succ : blk->successors) {
+                if (!inQueue.count(succ->id)) {
+                    q.push(succ->id);
+                    inQueue.insert(succ->id);
+                }
+            }
+        }
+    }
+
+    // ========== Step 5: 应用复制传播 ==========
+    for (int bid = 0; bid < n; ++bid) {
+        CopyMap env = inMap[bid];   // 获取当前块的初始拷贝关系
+        auto blk = blocks[bid];
+        for (auto& instr : blk->instructions) {
+            replaceCopyUses(instr, env);    // 替换指令中的可传播变量
+            applyCopyTransfer(env, instr);  // 同步更新环境
+        }
+    }
+
+    // ========== Step 6: 重建指令序列 ==========
+    this->instructions.clear();
+    for (auto& b : blocks) {
+        for (auto& instr : b->instructions) {
+            this->instructions.push_back(instr);
+        }
+    }
 }
 
 /**

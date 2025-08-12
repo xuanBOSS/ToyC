@@ -127,6 +127,12 @@ public:
     
     std::string toString() const override;
 
+    // 判断一条赋值指令是否是简单复制
+    bool isSimpleCopy() const {
+        // 右操作数必须是变量类型（不是常量，也不是表达式）
+        return (source->type == OperandType::VARIABLE || source->type == OperandType::TEMP);
+    }    
+
     // 临时变量分析相关函数
     std::vector<std::string> getDefRegisters() override{
         return extractReg(target);  // 目标变量
@@ -345,4 +351,8 @@ public:
     //用于检查函数是否被使用
     static bool isFunctionUsed(const std::vector<std::shared_ptr<IRInstr>>& instructions,
                           const std::string& funcName);
+
+    // 在给定指令 instr 中，将所有使用的变量名 useVar 替换为新的变量名 cur
+    static void replaceUsedVariable(std::shared_ptr<IRInstr>& instr, 
+                            const std::string& oldVar, const std::string& newVar); 
 };

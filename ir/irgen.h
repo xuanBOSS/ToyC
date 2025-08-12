@@ -145,6 +145,7 @@ private:
     //void constantPropagation();    // 常量传播
     void constantPropagationCFG();   // 常量传播
     void deadCodeElimination();    // 死代码删除
+    void copyPropagationCFG();      // 复制传播优化
     void controlFlowOptimization();// 控制流优化
 
     // 判断指令是否具有副作用
