@@ -1378,6 +1378,7 @@ void IRGenerator::constantPropagationCFG() {
     // 假定 blocks[0] 是入口（如果函数有多入口或特殊结构需修改）
     q.push(0);
 
+    std::unordered_set<int> clearedLoops; // 记录已清理的循环入口块
     while (!q.empty()) {
         int bid = q.front(); q.pop();
         auto blk = blocks[bid];
@@ -1402,6 +1403,12 @@ void IRGenerator::constantPropagationCFG() {
             /*if (loopDefs.count(bid)) {
                 clearLoopDefs(accum, loopDefs, bid);
             }*/
+
+            // 只对未清理的循环入口块做清理
+            if (loopDefs.count(bid) && clearedLoops.count(bid) == 0) {
+                clearLoopDefs(accum, loopDefs, bid);
+                clearedLoops.insert(bid);
+            }
 
             inMap[bid] = accum;
         }
