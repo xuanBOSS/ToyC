@@ -2015,7 +2015,8 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
  */
 void IRGenerator::copyPropagationCFG() {
     // ========== Step 1: 构建CFG ==========
-    auto blocks = buildBasicBlocksByLabel();
+    //auto blocks = buildBasicBlocksByLabel();
+    auto blocks = buildBasicBlocks();
     buildCFG(blocks);
 
     int n = (int)blocks.size();
