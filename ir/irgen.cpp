@@ -1368,11 +1368,6 @@ void IRGenerator::constantPropagationCFG() {
         auto& defSet = loopDefs[toBlk];
         defSet.insert(defs.begin(), defs.end());
 
-        // 把 defs 分配给循环体中所有块
-        /*auto loopBlocks = getLoopBlocks(cfg, fromBlk, toBlk); // 找到循环体的所有 block ID
-        for (auto blkId : loopBlocks) {
-            loopDefs[blkId].insert(defs.begin(), defs.end());
-        }*/
     }
 
     // 4. 初始化 in/out map
@@ -1404,9 +1399,9 @@ void IRGenerator::constantPropagationCFG() {
             }
 
             // 清除循环定义变量的常量状态（只有循环入口块才清除）
-            if (loopDefs.count(bid)) {
+            /*if (loopDefs.count(bid)) {
                 clearLoopDefs(accum, loopDefs, bid);
-            }
+            }*/
 
             inMap[bid] = accum;
         }
