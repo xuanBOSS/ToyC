@@ -104,13 +104,13 @@ int main(int argc, char* argv[]) {
 
     // 代码生成配置
     CodeGenConfig config;
-    /*if (enableOptimization) {
+    if (enableOptimization) {
         // 启用优化选项
         config.optimizeStackLayout = true;
         //config.eliminateDeadStores = true;
         config.enablePeepholeOptimizations = true;
         //config.regAllocStrategy = RegisterAllocStrategy::GRAPH_COLOR; // 使用图着色算法
-    }*/
+    }
     
     // 创建临时字符串流用于收集输出
     std::stringstream outputStream;
