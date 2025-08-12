@@ -1484,6 +1484,17 @@ void IRGenerator::constantPropagationCFG() {
                     }
                 }
             } 
+            // 处理函数调用指令
+            else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                for (auto& arg : callInstr->params) {
+                    if (arg->type == OperandType::VARIABLE || arg->type == OperandType::TEMP) {
+                        auto it = env.find(arg->name);
+                        if (it != env.end() && it->second.kind == LatticeKind::Constant) {
+                            arg = makeConstantOperand(it->second.constantValue, arg->name);
+                        }
+                    }
+                }
+            } 
             // 处理返回指令
             else if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
                 if (returnInstr->value && (returnInstr->value->type == OperandType::VARIABLE || returnInstr->value->type == OperandType::TEMP)) {
