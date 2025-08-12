@@ -413,7 +413,7 @@ void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
-    deadCodeElimination();    // 删除无效果的代码
+    //deadCodeElimination();    // 删除无效果的代码
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
@@ -1638,7 +1638,7 @@ void IRGenerator::deadCodeElimination() {
             this->instructions.push_back(instr);
         }
     }
-    
+
 }
 
 
