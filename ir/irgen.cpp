@@ -1007,6 +1007,44 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
     std::vector<std::shared_ptr<BasicBlock>> blocks;    // 存储生成的基本块
     const auto& instrs = this->instructions; 
 
+    // === 修改点1：构建前去重已有标签 ===
+    std::unordered_set<std::string> seenLabels;
+    std::unordered_map<std::string, std::string> oldToNew; // 记录标签改名映射
+    for (auto &instr : this->instructions) {
+        if (auto lbl = std::dynamic_pointer_cast<LabelInstr>(instr)) {
+            if (seenLabels.count(lbl->label)) {
+                std::string newName = lbl->label + "_dup" + std::to_string(seenLabels.size());
+                oldToNew[lbl->label] = newName;
+                lbl->label = newName;
+            }
+            seenLabels.insert(lbl->label);
+        }
+    }
+    
+    // === 修改点4：同步更新跳转指令的目标标签 ===
+    for (auto &instr : this->instructions) {
+        if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+            if (oldToNew.count(ifg->target->name)) {
+                ifg->target->name = oldToNew[ifg->target->name];
+            }
+        } else if (auto g = std::dynamic_pointer_cast<GotoInstr>(instr)) {
+            if (oldToNew.count(g->target->name)) {
+                g->target->name = oldToNew[g->target->name];
+            }
+        }
+    }
+
+    // === 修改点2：提供生成唯一标签的工具函数 ===
+    auto makeUniqueLabel = [&](const std::string &base) {
+        std::string candidate = base;
+        int counter = 0;
+        while (seenLabels.count(candidate)) {
+            candidate = base + "_" + std::to_string(counter++);
+        }
+        seenLabels.insert(candidate);
+        return candidate;
+    };
+
     // 首先扫描得到 label -> index 映射
     std::unordered_map<std::string, int> labelToIndex;
     for (int i = 0; i < (int)instrs.size(); ++i) {
@@ -1088,7 +1126,7 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
 
         // 每一个基本块都有各自唯一的标签
         // 如果第一条指令不是标签，生成一个新标签指令
-        if (block->instructions.empty() || 
+        /*if (block->instructions.empty() || 
             !std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
             std::string newLabel = "__block" + std::to_string(block->id); // 唯一标签名
             auto lblInstr = std::make_shared<LabelInstr>(newLabel);
@@ -1096,6 +1134,18 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
             block->label = newLabel; // 更新块标签
         } else {
             // 第一条是标签
+            auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
+            block->label = lbl->label;
+        }*/
+
+        // === 修改点3：新标签使用 makeUniqueLabel 确保全局唯一 ===
+        if (block->instructions.empty() || 
+            !std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
+            std::string newLabel = makeUniqueLabel("__block" + std::to_string(block->id));
+            auto lblInstr = std::make_shared<LabelInstr>(newLabel);
+            block->instructions.insert(block->instructions.begin(), lblInstr);
+            block->label = newLabel;
+        } else {
             auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
             block->label = lbl->label;
         }
