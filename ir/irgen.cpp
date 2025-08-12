@@ -412,7 +412,7 @@ void IRGenerator::dumpIR(const std::string& filename) const {
 void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
-    //constantPropagationCFG();    // 在代码中传播常量值
+    constantPropagationCFG();    // 在代码中传播常量值
     //deadCodeElimination();    // 删除无效果的代码
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
@@ -1204,7 +1204,7 @@ void IRGenerator::buildCFG(std::vector<std::shared_ptr<BasicBlock>>& blocks) {
                 }
             } 
             else if (!std::dynamic_pointer_cast<ReturnInstr>(last)) {
-                //if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
+                if (i + 1 < (int)blocks.size()) succSet.insert(blocks[i + 1]);
 
             } 
         }
