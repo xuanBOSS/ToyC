@@ -1589,11 +1589,11 @@ void IRGenerator::constantPropagationCFG() {
  * 4. 反向扫描指令，删除未被使用的定义
  */
 void IRGenerator::deadCodeElimination() {
-     // Step 0: 构建基本块和控制流图
+    // ========== Step 0: 构建CFG ==========
     auto basicBlocks = buildBasicBlocks();
     buildCFG(basicBlocks);
 
-    // Step 1: 收集 use / def
+    // ========== Step 1: 收集use/def集合 ==========
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> use, def;
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
@@ -1616,33 +1616,32 @@ void IRGenerator::deadCodeElimination() {
     }
 
 
-    // -----------------------------
-    // MODIFIED: 先计算 SCC（Tarjan），以便识别循环与循环出口
-    // -----------------------------
-    /* MODIFIED START */
-    // Tarjan SCC implementation
+    // ========== MODIFIED: Tarjan算法识别循环(SCC) ==========
     std::unordered_map<std::shared_ptr<BasicBlock>, int> indexMap;
     std::unordered_map<std::shared_ptr<BasicBlock>, int> lowlink;
     std::unordered_set<std::shared_ptr<BasicBlock>> onStack;
-    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;
+    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;    // 存储所有强连通分量（SCC）
     int indexCounter = 0;
     std::vector<std::vector<std::shared_ptr<BasicBlock>>> sccList;
 
+    // Tarjan的DFS实现
     std::function<void(std::shared_ptr<BasicBlock>)> tarjan = [&](std::shared_ptr<BasicBlock> v) {
         indexMap[v] = ++indexCounter;
         lowlink[v] = indexMap[v];
         tarjanStack.push(v);
         onStack.insert(v);
 
+        // 遍历后继节点
         for (auto w : v->successors) {
-            if (!indexMap.count(w)) {
-                tarjan(w);
+            if (!indexMap.count(w)) {   // 未访问过的节点
+                tarjan(w);  
                 lowlink[v] = std::min(lowlink[v], lowlink[w]);
-            } else if (onStack.count(w)) {
+            } else if (onStack.count(w)) {  // 已在栈中的节点（形成环）
                 lowlink[v] = std::min(lowlink[v], indexMap[w]);
             }
         }
 
+        // 发现SCC（lowlink[v] == indexMap[v]表示找到一个强连通分量）
         if (lowlink[v] == indexMap[v]) {
             std::vector<std::shared_ptr<BasicBlock>> scc;
             while (!tarjanStack.empty()) {
@@ -1650,24 +1649,25 @@ void IRGenerator::deadCodeElimination() {
                 tarjanStack.pop();
                 onStack.erase(w);
                 scc.push_back(w);
-                if (w == v) break;
+                if (w == v) break;  // 弹出直到当前节点
             }
             sccList.push_back(std::move(scc));
         }
     };
 
+    // 对所有块执行Tarjan算法
     for (auto& b : basicBlocks) {
         if (!indexMap.count(b)) tarjan(b);
     }
 
-    // map block -> scc id
+    // 建立块到SCC的映射（block -> SCC ID）
     std::unordered_map<std::shared_ptr<BasicBlock>, int> blockToScc;
     for (int i = 0; i < (int)sccList.size(); ++i) {
         for (auto& b : sccList[i]) blockToScc[b] = i;
     }
 
-    // Precompute for each scc the set of exit blocks (successors not in this scc)
-    std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
+    // 预计算每个SCC的出口块（后继不在同一SCC的块）
+    /*std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
     for (int i = 0; i < (int)sccList.size(); ++i) {
         for (auto& b : sccList[i]) {
             for (auto& succ : b->successors) {
@@ -1676,16 +1676,45 @@ void IRGenerator::deadCodeElimination() {
                 }
             }
         }
+    }*/
+
+    // ========== MODIFIED: 生成 SCC 拓扑顺序 ==========
+    std::vector<int> sccTopoOrder;
+    {
+        std::unordered_map<int, std::vector<int>> sccGraph;
+        std::unordered_map<int, int> indeg;
+        for (int i = 0; i < (int)sccList.size(); ++i) indeg[i] = 0;
+
+        for (int i = 0; i < (int)sccList.size(); ++i) {
+            for (auto& b : sccList[i]) {
+                for (auto& succ : b->successors) {
+                    int succScc = blockToScc[succ];
+                    if (succScc != i) {
+                        sccGraph[i].push_back(succScc);
+                        indeg[succScc]++;
+                    }
+                }
+            }
+        }
+
+        std::queue<int> q;
+        for (auto& kv : indeg) if (kv.second == 0) q.push(kv.first);
+
+        while (!q.empty()) {
+            int s = q.front(); q.pop();
+            sccTopoOrder.push_back(s);
+            for (auto nxt : sccGraph[s]) {
+                if (--indeg[nxt] == 0) q.push(nxt);
+            }
+        }
     }
-    /* MODIFIED END */
-    // -----------------------------
 
 
     // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
 
     // 初始化 worklist（逆序放入所有块）
-    std::queue<std::shared_ptr<BasicBlock>> worklist;
+    /*std::queue<std::shared_ptr<BasicBlock>> worklist;
     std::unordered_set<std::shared_ptr<BasicBlock>> inQueue;
     for (auto it = basicBlocks.rbegin(); it != basicBlocks.rend(); ++it) {
         worklist.push(*it);
@@ -1699,14 +1728,8 @@ void IRGenerator::deadCodeElimination() {
 
         // live_out = 后继的 live_in 并集
         std::unordered_set<std::string> new_live_out;
-        /*for (auto succ : block->successors) {
-            new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
-        }*/
-       // -----------------------------
-        // MODIFIED: 回边/循环内部处理 —— 如果某条边属于同一 SCC（即循环内部的边），
-        //           则把该 SCC 的所有出口块的 live_in 合并进来（保证循环外使用传播回循环体）
-        // -----------------------------
-        /* MODIFIED START */
+        
+        // MODIFIED: 区分普通边和回边（循环内部边）
         int thisScc = -1;
         if (blockToScc.count(block)) thisScc = blockToScc[block];
 
@@ -1723,12 +1746,11 @@ void IRGenerator::deadCodeElimination() {
                 // 同时也可以合并 succ 本身的 live_in（保险起见）
                 new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
             } else {
-                // 普通边（跨 SCC）
+                // 普通边（跨 SCC）：直接合并后继的live_in
                 new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
             }
         }
-        /* MODIFIED END */
-        // -----------------------------
+
 
         // live_in = use ∪ (live_out - def)
         std::unordered_set<std::string> new_live_in = use[block];
@@ -1747,6 +1769,35 @@ void IRGenerator::deadCodeElimination() {
                 if (!inQueue.count(pred)) {
                     worklist.push(pred);
                     inQueue.insert(pred);
+                }
+            }
+        }
+    }*/
+
+    // ========== MODIFIED: SCC 内一次性收敛 ==========
+    for (int sccId : sccTopoOrder) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto& block : sccList[sccId]) {
+                std::unordered_set<std::string> new_live_out;
+
+                // 合并所有后继的 live_in
+                for (auto succ : block->successors) {
+                    new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
+                }
+
+                std::unordered_set<std::string> new_live_in = use[block];
+                for (auto& var : new_live_out) {
+                    if (def[block].find(var) == def[block].end()) {
+                        new_live_in.insert(var);
+                    }
+                }
+
+                if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
+                    live_in[block] = std::move(new_live_in);
+                    live_out[block] = std::move(new_live_out);
+                    changed = true;
                 }
             }
         }
