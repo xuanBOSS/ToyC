@@ -1667,7 +1667,7 @@ void IRGenerator::deadCodeElimination() {
     }
 
     // 预计算每个SCC的出口块（后继不在同一SCC的块）
-    /*std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
+    std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
     for (int i = 0; i < (int)sccList.size(); ++i) {
         for (auto& b : sccList[i]) {
             for (auto& succ : b->successors) {
@@ -1676,45 +1676,15 @@ void IRGenerator::deadCodeElimination() {
                 }
             }
         }
-    }*/
-
-    // ========== MODIFIED: 生成 SCC 拓扑顺序 ==========
-    std::vector<int> sccTopoOrder;
-    {
-        std::unordered_map<int, std::vector<int>> sccGraph;
-        std::unordered_map<int, int> indeg;
-        for (int i = 0; i < (int)sccList.size(); ++i) indeg[i] = 0;
-
-        for (int i = 0; i < (int)sccList.size(); ++i) {
-            for (auto& b : sccList[i]) {
-                for (auto& succ : b->successors) {
-                    int succScc = blockToScc[succ];
-                    if (succScc != i) {
-                        sccGraph[i].push_back(succScc);
-                        indeg[succScc]++;
-                    }
-                }
-            }
-        }
-
-        std::queue<int> q;
-        for (auto& kv : indeg) if (kv.second == 0) q.push(kv.first);
-
-        while (!q.empty()) {
-            int s = q.front(); q.pop();
-            sccTopoOrder.push_back(s);
-            for (auto nxt : sccGraph[s]) {
-                if (--indeg[nxt] == 0) q.push(nxt);
-            }
-        }
     }
 
+    
 
     // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
 
     // 初始化 worklist（逆序放入所有块）
-    /*std::queue<std::shared_ptr<BasicBlock>> worklist;
+    std::queue<std::shared_ptr<BasicBlock>> worklist;
     std::unordered_set<std::shared_ptr<BasicBlock>> inQueue;
     for (auto it = basicBlocks.rbegin(); it != basicBlocks.rend(); ++it) {
         worklist.push(*it);
@@ -1772,36 +1742,8 @@ void IRGenerator::deadCodeElimination() {
                 }
             }
         }
-    }*/
-
-    // ========== MODIFIED: SCC 内一次性收敛 ==========
-    for (int sccId : sccTopoOrder) {
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (auto& block : sccList[sccId]) {
-                std::unordered_set<std::string> new_live_out;
-
-                // 合并所有后继的 live_in
-                for (auto succ : block->successors) {
-                    new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
-                }
-
-                std::unordered_set<std::string> new_live_in = use[block];
-                for (auto& var : new_live_out) {
-                    if (def[block].find(var) == def[block].end()) {
-                        new_live_in.insert(var);
-                    }
-                }
-
-                if (new_live_in != live_in[block] || new_live_out != live_out[block]) {
-                    live_in[block] = std::move(new_live_in);
-                    live_out[block] = std::move(new_live_out);
-                    changed = true;
-                }
-            }
-        }
     }
+
 
 
     // Step 3: 反向删除死代码
