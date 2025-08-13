@@ -414,6 +414,7 @@ void IRGenerator::optimize() {
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
     copyPropagationCFG();       // 复制传播优化
+    commonSubexpressionElimination();   // 公共子表达式消除
     deadCodeElimination();    // 删除无效果的代码
 
     
@@ -2158,6 +2159,594 @@ void IRGenerator::copyPropagationCFG() {
         }
     }
 }
+
+/**
+ * 执行公共子表达式消除优化（Common Subexpression Elimination, CSE）
+ * 算法步骤：
+ * 1. 构建每个基本块的GEN和KILL集合
+ * 2. 数据流分析计算IN和OUT集合
+ * 3. 替换冗余表达式
+ */
+/*void IRGenerator::commonSubexpressionElimination() {
+    // 定义表达式集合类型
+    using ExprSet = std::unordered_set<Expression, ExpressionHash>;
+
+    // 数据流分析使用的集合
+    std::unordered_map<int, ExprSet> inMap;   // 基本块入口的可用表达式集合
+    std::unordered_map<int, ExprSet> outMap;  // 基本块出口的可用表达式集合
+    std::unordered_map<int, ExprSet> genMap;  // 基本块生成的表达式集合
+    std::unordered_map<int, ExprSet> killMap; // 基本块杀死的表达式集合
+
+    // ========== Step 0: 构建CFG ==========
+    //auto blocks = buildBasicBlocksByLabel();
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    // Step 1: 构造 GEN 和 KILL 集合
+    for (auto& blk : blocks) {
+        ExprSet gen, kill;
+
+        // 遍历基本块中的每条指令
+        for (auto& instr : blk->instructions) {
+
+            // 处理二元运算指令（如加法、乘法）
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (binOp && !isSideEffectInstr(instr)) {
+                // 对交换律运算保持顺序一致
+                // 对可交换运算（+、*）的操作数进行标准化排序
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                    if (rhs < lhs) std::swap(lhs, rhs);
+                }
+
+                // 创建表达式对象并加入gen集合
+                Expression e{binOp->opcode, lhs, rhs, false};
+                gen.insert(e);
+            }
+            // 定义的变量会杀死所有依赖它的表达式
+            for (auto it = gen.begin(); it != gen.end();) {
+                if (it->lhs == binOp->result->name || it->rhs == binOp->result->name) {
+                    it = gen.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // 将定义的变量加入kill集合（标记为杀死）
+            kill.insert(Expression{OpCode::ADD, binOp->result->name, "", true}); 
+        }
+
+        // 保存当前基本块的gen和kill集合
+        genMap[blk->id] = std::move(gen);
+        killMap[blk->id] = std::move(kill);
+    }
+
+    // Step 2: 数据流分析 (可用表达式分析)
+    std::queue<int> q;  // 工作队列
+    std::unordered_set<int> inQueue;    // 记录已在队列中的基本块
+
+    // 初始化工作队列（加入所有基本块）
+    for (auto& blk : blocks) {
+        q.push(blk->id);
+        inQueue.insert(blk->id);
+    }
+
+    while (!q.empty()) {
+        int bid = q.front();
+        q.pop();
+        inQueue.erase(bid);
+        auto blk = blocks[bid];
+
+        // IN[bid] = 交集(OUT[pred])
+        if (blk->predecessors.empty()) {
+            // 入口基本块：IN集合为空
+            inMap[bid].clear();
+        } else {
+            // 计算前驱基本块OUT集合的交集
+            ExprSet inter = outMap[blk->predecessors[0]->id];
+            for (size_t i = 1; i < blk->predecessors.size(); ++i) {
+                ExprSet temp;
+                auto& outPred = outMap[blk->predecessors[i]->id];
+                for (auto& e : inter) {
+                    if (outPred.count(e)) temp.insert(e);
+                }
+                inter = std::move(temp);
+            }
+            inMap[bid] = std::move(inter);
+        }
+
+        // OUT[bid] = GEN[bid] ∪ (IN[bid] - KILL[bid])
+        ExprSet outSet = genMap[bid];
+        for (auto& e : inMap[bid]) {
+            bool killed = false;
+            // 检查表达式是否被杀死（依赖的变量被重定义）
+            for (auto& k : killMap[bid]) {
+                if (k.lhs == e.lhs || k.lhs == e.rhs) {
+                    killed = true;
+                    break;
+                }
+            }
+            if (!killed) outSet.insert(e);  // 未被杀死则加入OUT集合
+        }
+
+        // 如果OUT集合有变化，更新并将后继加入队列
+        if (outSet != outMap[bid]) {
+            outMap[bid] = std::move(outSet);
+            for (auto& succ : blk->successors) {
+                if (!inQueue.count(succ->id)) {
+                    q.push(succ->id);
+                    inQueue.insert(succ->id);
+                }
+            }
+        }
+    }
+
+    // Step 3: 替换冗余表达式
+    std::unordered_map<Expression, std::string, ExpressionHash> exprToVar;
+    for (auto& blk : blocks) {
+        ExprSet available = inMap[blk->id]; // 当前可用的表达式集合
+
+        
+        // 用迭代器遍历方便插入删除
+        for (auto it = blk->instructions.begin(); it != blk->instructions.end(); ) {
+            auto instr = *it;
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (binOp && !isSideEffectInstr(instr)) {
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                    if (rhs < lhs) std::swap(lhs, rhs);
+                }
+
+                Expression e{binOp->opcode, lhs, rhs, false};
+
+                if (available.count(e) && exprToVar.count(e)) {
+                    // 找到之前计算的变量，用AssignInstr替换当前指令
+                    // 先删除当前二元运算指令
+                    it = blk->instructions.erase(it);
+
+                    // 构造赋值指令 AssignInstr: binOp->result = exprToVar[e]
+                    auto assignInstr = std::make_shared<AssignInstr>(binOp->result, exprToVar[e]);
+
+                    // 在当前位置插入赋值指令
+                    it = blk->instructions.insert(it, assignInstr);
+
+                    //++it; // 继续遍历下一条指令
+                } else {
+                    exprToVar[e] = binOp->result->name;
+                    available.insert(e);
+                    ++it;
+                }
+            } else {
+                ++it;
+            }
+
+            // 更新可用表达式集合，杀死依赖 instr.dst 的表达式
+            for (auto exprIt = available.begin(); exprIt != available.end();) {
+                if (exprIt->lhs == binOp->result->name || exprIt->rhs == binOp->result->name) {
+                    exprIt = available.erase(exprIt);
+                } else {
+                    ++exprIt;
+                }
+            }
+        }
+    }
+
+    // Step 4: 重建指令序列
+    this->instructions.clear();
+    for (auto& b : blocks) {
+        for (auto& instr : b->instructions) {
+            this->instructions.push_back(instr);
+        }
+    }
+}*/
+
+/*void IRGenerator::commonSubexpressionElimination() {
+    using ExprSet = std::unordered_set<Expression, ExpressionHash>;
+
+    // 构建基本块和控制流图
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    // 全局变量名到 Operand 指针的映射
+    std::unordered_map<std::string, std::shared_ptr<Operand>> varToOperand;
+
+    // --- Step 1: 构建所有表达式全集，用于初始化OUT集合 ---
+    ExprSet allExprs;
+
+    for (auto& blk : blocks) {
+        for (auto& instr : blk->instructions) {
+            // 只处理二元操作指令且无副作用的指令
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (binOp && !isSideEffectInstr(instr)) {
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                // 对于可交换操作(ADD/MUL)，统一操作数顺序以便识别相同表达式
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                    if (rhs < lhs) std::swap(lhs, rhs); // 标准化操作数顺序
+                }
+                allExprs.insert(Expression{binOp->opcode, lhs, rhs, false});
+            }
+        }
+    }
+
+    std::unordered_map<int, ExprSet> genMap, killMap;
+
+    // --- Step 2: 为每个基本块计算GEN和KILL集合 ---
+    for (auto& blk : blocks) {
+        ExprSet gen;
+        std::unordered_set<std::string> definedVars;  // 本块所有定义变量
+
+        // 遍历指令生成GEN集合和定义变量集合
+        for (auto& instr : blk->instructions) {
+            
+
+            // 返回定义变量名
+            auto defVar = IRAnalyzer::getDefinedVariables(instr);  
+            for (const auto& var : defVar) {
+                if (!var.empty()) {      // 过滤空字符串（如果有）
+                    definedVars.insert(var);
+
+                    // 【修改】更新 varToOperand 映射，根据指令类型选择对应 Operand
+                    if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                        if (binOp->result && binOp->result->name == var) {
+                            varToOperand[var] = binOp->result; // 【修改】
+                        }
+                    }
+                    else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                        if (unaryOp->result && unaryOp->result->name == var) {
+                            varToOperand[var] = unaryOp->result; // 【修改】
+                        }
+                    }
+                    else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                        if (assignInstr->target && assignInstr->target->name == var) {
+                            varToOperand[var] = assignInstr->target; // 【修改】
+                        }
+                    }
+                    else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                        if (callInstr->result && callInstr->result->name == var) {
+                            varToOperand[var] = callInstr->result; // 【修改】
+                        }
+                    }
+                }
+            }
+
+            // 对于BinaryOpInstr仍然生成GEN集合
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (!isSideEffectInstr(instr)) {
+                    std::string lhs = binOp->left->name;
+                    std::string rhs = binOp->right->name;
+                    if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                        if (rhs < lhs) std::swap(lhs, rhs);
+                    }
+                    gen.insert(Expression{binOp->opcode, lhs, rhs, false});
+                }
+            }
+        }
+
+        // 计算KILL集合: 所有包含本块定义变量的表达式
+        ExprSet kill;
+        for (auto& e : allExprs) {
+            if (definedVars.count(e.lhs) || definedVars.count(e.rhs)) {
+                kill.insert(e);
+            }
+        }
+
+        // 保存本块的GEN和KILL集合
+        genMap[blk->id] = std::move(gen);
+        killMap[blk->id] = std::move(kill);
+    }
+
+    // --- Step 3: 数据流分析 - 计算每个块的IN和OUT集合 ---
+    std::unordered_map<int, ExprSet> inMap, outMap;
+
+    // 初始化:
+    // - 所有块的OUT集合初始化为所有表达式
+    // - 入口块的IN集合为空，其他块的IN集合初始化为所有表达式
+    for (auto& blk : blocks) {
+        outMap[blk->id] = allExprs;
+
+        if (blk->predecessors.empty()) {
+            inMap[blk->id].clear();
+        } else {
+            inMap[blk->id] = allExprs;
+        }
+    }
+
+    // 迭代计算直到收敛
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& blk : blocks) {
+            int bid = blk->id;
+
+            // IN = 交集 of OUT[pred]
+            if (blk->predecessors.empty()) {
+                inMap[bid].clear();
+            } else {
+                ExprSet inter = outMap[blk->predecessors[0]->id];
+                for (size_t i = 1; i < blk->predecessors.size(); ++i) {
+                    ExprSet temp;
+                    auto& outPred = outMap[blk->predecessors[i]->id];
+                    // 计算交集
+                    for (auto& e : inter) {
+                        if (outPred.count(e)) temp.insert(e);
+                    }
+                    inter = std::move(temp);
+                }
+                inMap[bid] = std::move(inter);
+            }
+
+            // OUT = GEN ∪ (IN - KILL)
+            ExprSet outSet = genMap[bid];   // 首先包含GEN集合
+            for (auto& e : inMap[bid]) {
+                if (killMap[bid].count(e) == 0) {
+                    outSet.insert(e);   // 加入没有被杀死的IN集合表达式
+                }
+            }
+
+            // 检查是否发生变化
+            if (outSet != outMap[bid]) {
+                outMap[bid] = std::move(outSet);
+                changed = true;
+            }
+        }
+    }
+
+    // --- Step 4: 实际执行公共子表达式消除 ---
+    for (auto& blk : blocks) {
+        ExprSet available = inMap[blk->id]; // 初始可用表达式集合
+        std::unordered_map<Expression, std::string, ExpressionHash> exprToVar;
+
+        // 初始化 exprToVar 使其与 available 同步（可选，防止漏映射）
+        for (auto& e : available) {
+            exprToVar[e] = "";  // 空变量名，之后遇到赋值时更新
+        }
+
+        // 遍历基本块中的指令
+        for (auto it = blk->instructions.begin(); it != blk->instructions.end();) {
+            auto instr = *it;
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+
+            if (binOp && !isSideEffectInstr(instr)) {
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                    if (rhs < lhs) std::swap(lhs, rhs);
+                }
+                Expression e{binOp->opcode, lhs, rhs, false};
+
+                if (available.count(e) && !exprToVar[e].empty()) {
+                    // 【修改】使用 varToOperand 获取 Operand 指针
+                    auto rhsOperandIt = varToOperand.find(exprToVar[e]);
+                    if (rhsOperandIt != varToOperand.end()) {
+                        it = blk->instructions.erase(it);
+                        auto assignInstr = std::make_shared<AssignInstr>(binOp->result, rhsOperandIt->second); // 【修改】
+                        it = blk->instructions.insert(it, assignInstr);
+                        ++it;
+
+                        exprToVar[e] = binOp->result->name;
+                        varToOperand[binOp->result->name] = binOp->result; // 【修改】
+                        available.insert(e);
+                        continue;
+                    }
+                } else {
+                    exprToVar[e] = binOp->result->name;
+                    varToOperand[binOp->result->name] = binOp->result; // 【修改】
+                    available.insert(e);
+                }
+            }
+
+            ++it;
+
+
+            // 杀死依赖于当前定义变量的表达式，删除 available 和 exprToVar 中对应的条目
+            std::string defVar;
+            if (binOp) defVar = binOp->result->name;
+            if (!defVar.empty()) {
+                for (auto exprIt = available.begin(); exprIt != available.end();) {
+                    if (exprIt->lhs == defVar || exprIt->rhs == defVar) {
+                        // 删除对应 exprToVar 条目
+                        exprToVar.erase(*exprIt);
+                        exprIt = available.erase(exprIt);
+                    } else {
+                        ++exprIt;
+                    }
+                }
+            }
+        }
+    }
+
+    // --- Step 5: 重建指令序列 ---
+    this->instructions.clear();
+    for (auto& blk : blocks) {
+        for (auto& instr : blk->instructions) {
+            this->instructions.push_back(instr);
+        }
+    }
+}*/
+
+void IRGenerator::commonSubexpressionElimination() {
+    using ExprSet = std::unordered_set<Expression, ExpressionHash>;
+
+    // --- Step 0: 构建基本块和控制流图 ---
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    // 全局变量名到 Operand 指针的映射
+    std::unordered_map<std::string, std::shared_ptr<Operand>> varToOperand;
+
+    // --- Step 1: 构建所有表达式全集 ---
+    ExprSet allExprs;
+    for (auto& blk : blocks) {
+        for (auto& instr : blk->instructions) {
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (binOp && !isSideEffectInstr(instr)) {
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
+                    if (rhs < lhs) std::swap(lhs, rhs); // 【修改】标准化操作数顺序
+                }
+                allExprs.insert(Expression{binOp->opcode, lhs, rhs, false});
+            }
+        }
+    }
+
+    std::unordered_map<int, ExprSet> genMap, killMap;
+
+    // --- Step 2: 计算每个块的 GEN/KILL 集合 ---
+    for (auto& blk : blocks) {
+        ExprSet gen;
+        std::unordered_set<std::string> definedVars;
+
+        for (auto& instr : blk->instructions) {
+            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 【修改】统一获取定义变量
+            for (const auto& var : defVars) {
+                if (!var.empty()) {
+                    definedVars.insert(var);
+
+                    // 【修改】更新 varToOperand 映射
+                    if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                        if (binOp->result && binOp->result->name == var)
+                            varToOperand[var] = binOp->result;
+                    } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                        if (unaryOp->result && unaryOp->result->name == var)
+                            varToOperand[var] = unaryOp->result;
+                    } else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                        if (assignInstr->target && assignInstr->target->name == var)
+                            varToOperand[var] = assignInstr->target;
+                    } else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                        if (callInstr->result && callInstr->result->name == var)
+                            varToOperand[var] = callInstr->result;
+                    }
+                }
+            }
+
+            // 【修改】GEN 集合只包含 BinaryOpInstr
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (!isSideEffectInstr(instr)) {
+                    std::string lhs = binOp->left->name;
+                    std::string rhs = binOp->right->name;
+                    if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL)
+                        if (rhs < lhs) std::swap(lhs, rhs);
+                    gen.insert(Expression{binOp->opcode, lhs, rhs, false});
+                }
+            }
+        }
+
+        // 【修改】计算 KILL 集合
+        ExprSet kill;
+        for (auto& e : allExprs) {
+            if (definedVars.count(e.lhs) || definedVars.count(e.rhs))
+                kill.insert(e);
+        }
+
+        genMap[blk->id] = std::move(gen);
+        killMap[blk->id] = std::move(kill);
+    }
+
+    // --- Step 3: 数据流分析 IN/OUT ---
+    std::unordered_map<int, ExprSet> inMap, outMap;
+    for (auto& blk : blocks) {
+        outMap[blk->id] = allExprs;
+        inMap[blk->id] = blk->predecessors.empty() ? ExprSet{} : allExprs;
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& blk : blocks) {
+            int bid = blk->id;
+
+            // IN = ∩ OUT[pred]
+            ExprSet inter;
+            if (!blk->predecessors.empty()) {
+                inter = outMap[blk->predecessors[0]->id];
+                for (size_t i = 1; i < blk->predecessors.size(); ++i) {
+                    ExprSet temp;
+                    auto& outPred = outMap[blk->predecessors[i]->id];
+                    for (auto& e : inter)
+                        if (outPred.count(e)) temp.insert(e);
+                    inter = std::move(temp);
+                }
+            }
+            inMap[bid] = std::move(inter);
+
+            // OUT = GEN ∪ (IN - KILL)
+            ExprSet outSet = genMap[bid];
+            for (auto& e : inMap[bid])
+                if (!killMap[bid].count(e))
+                    outSet.insert(e);
+
+            if (outSet != outMap[bid]) {
+                outMap[bid] = std::move(outSet);
+                changed = true;
+            }
+        }
+    }
+
+    // --- Step 4: 替换公共子表达式 ---
+    for (auto& blk : blocks) {
+        ExprSet available = inMap[blk->id];
+        std::unordered_map<Expression, std::string, ExpressionHash> exprToVar;
+        for (auto& e : available) exprToVar[e] = "";
+
+        // 【修改】先收集所有替换操作，避免迭代器混乱
+        std::vector<std::pair<std::shared_ptr<IRInstr>, std::shared_ptr<AssignInstr>>> replacements;
+
+        for (auto& instr : blk->instructions) {
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (binOp && !isSideEffectInstr(instr)) {
+                std::string lhs = binOp->left->name;
+                std::string rhs = binOp->right->name;
+                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL)
+                    if (rhs < lhs) std::swap(lhs, rhs);
+                Expression e{binOp->opcode, lhs, rhs, false};
+
+                auto itVar = exprToVar.find(e);
+                if (available.count(e) && itVar != exprToVar.end() && !itVar->second.empty()) {
+                    auto rhsOperandIt = varToOperand.find(itVar->second);
+                    if (rhsOperandIt != varToOperand.end()) {
+                        auto assignInstr = std::make_shared<AssignInstr>(binOp->result, rhsOperandIt->second);
+                        replacements.emplace_back(instr, assignInstr);
+
+                        exprToVar[e] = binOp->result->name;          // 【修改】更新映射
+                        varToOperand[binOp->result->name] = binOp->result; // 【修改】
+                    }
+                } else {
+                    exprToVar[e] = binOp->result->name;             // 【修改】记录新结果
+                    varToOperand[binOp->result->name] = binOp->result;
+                    available.insert(e);
+                }
+
+                // 【修改】杀死依赖当前定义的表达式
+                std::string defVar = binOp->result->name;
+                for (auto exprIt = available.begin(); exprIt != available.end();) {
+                    if (exprIt->lhs == defVar || exprIt->rhs == defVar) {
+                        exprToVar.erase(*exprIt);
+                        exprIt = available.erase(exprIt);
+                    } else ++exprIt;
+                }
+            }
+        }
+
+        // 【修改】统一替换指令，避免迭代器问题
+        for (auto& rep : replacements) {
+            auto it = std::find(blk->instructions.begin(), blk->instructions.end(), rep.first);
+            if (it != blk->instructions.end()) *it = rep.second;
+        }
+    }
+
+    // --- Step 5: 重建指令序列 ---
+    this->instructions.clear();
+    for (auto& blk : blocks)
+        for (auto& instr : blk->instructions)
+            this->instructions.push_back(instr);
+}
+
+
+
 
 /**
  * 执行控制流优化（Control Flow Optimization）
