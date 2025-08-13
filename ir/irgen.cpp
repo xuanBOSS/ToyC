@@ -2570,7 +2570,7 @@ void IRGenerator::copyPropagationCFG() {
 /**
  * 执行公共子表达式消除优化（CSE，带SCC循环处理）
  */
-void IRGenerator::commonSubexpressionElimination() {
+/*void IRGenerator::commonSubexpressionElimination() {
     using ExprSet = std::unordered_set<Expression, ExpressionHash>;
 
     // ========== Step 0: 构建CFG ==========
@@ -2582,7 +2582,7 @@ void IRGenerator::commonSubexpressionElimination() {
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; 
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, binOp->result->name}; 
                 allExprs.insert(expr);
             }
         }
@@ -2619,9 +2619,7 @@ void IRGenerator::commonSubexpressionElimination() {
                 Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, binOp->result->name}; // 【修改】result 置空
                 gen.insert(expr);
             }
-            /*for (auto& d : defs) {
-                if (varToExpr.count(d)) kill.insert(varToExpr[d].begin(), varToExpr[d].end());
-            }*/
+            
            // 处理 KILL 集：递归删除所有间接依赖表达式
             for (auto& d : defs)
                 killRecursive(d);
@@ -2746,6 +2744,262 @@ void IRGenerator::commonSubexpressionElimination() {
     }
 
     // ========== Step 6: 更新全局指令序列 ==========
+    this->instructions.clear();
+    for (auto& block : basicBlocks)
+        for (auto& instr : block->instructions)
+            this->instructions.push_back(instr);
+}*/
+
+void IRGenerator::commonSubexpressionElimination() {
+    // ========== 类型与工具（核心表达式键） ==========
+    // 【修复】用 ExprCore 作为唯一匹配键，仅包含 opcode/lhs/rhs，避免 result 参与导致不一致
+    struct ExprCore {
+        OpCode op;
+        std::string lhs, rhs;
+        bool operator==(const ExprCore& o) const {
+            return op == o.op && lhs == o.lhs && rhs == o.rhs;
+        }
+    };
+    struct ExprCoreHash {
+        size_t operator()(const ExprCore& e) const {
+            // 简单组合哈希即可；真实项目可用更稳健的 hash 组合
+            return std::hash<OpCode>()(e.op) ^
+                   (std::hash<std::string>()(e.lhs) << 1) ^
+                   (std::hash<std::string>()(e.rhs) << 2);
+        }
+    };
+
+    using CoreSet = std::unordered_set<ExprCore, ExprCoreHash>;
+
+    auto makeCore = [&](const std::shared_ptr<BinaryOpInstr>& bin) -> ExprCore {
+        return { bin->opcode, bin->left->name, bin->right->name };
+    };
+
+    // ========== Step 0: 构建 CFG ==========
+    auto basicBlocks = buildBasicBlocks();
+    buildCFG(basicBlocks);
+
+    // ========== Step 1: 收集表达式全集 & 依赖 ==========
+    CoreSet allCores;
+
+    // 【修复】依赖图：result -> {lhs, rhs}
+    std::unordered_map<std::string, std::unordered_set<std::string>> varDeps;     // 正向依赖：res 依赖 lhs/rhs
+    std::unordered_map<std::string, std::unordered_set<std::string>> revVarDeps;  // 反向依赖：x 被哪些 res 依赖
+
+    // 【修复】变量 -> 以该变量为操作数的核心表达式
+    std::unordered_map<std::string, CoreSet> varToCores;
+
+    for (auto& block : basicBlocks) {
+        for (auto& instr : block->instructions) {
+            if (auto bin = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                ExprCore core = makeCore(bin);
+                allCores.insert(core);
+
+                // 依赖图（用于间接 KILL）
+                if (!bin->result->name.empty()) {
+                    varDeps[bin->result->name].insert(bin->left->name);
+                    varDeps[bin->result->name].insert(bin->right->name);
+                    revVarDeps[bin->left->name].insert(bin->result->name);
+                    revVarDeps[bin->right->name].insert(bin->result->name);
+                }
+
+                // 变量到核心表达式的反查（活跃性更新 & KILL）
+                varToCores[bin->left->name].insert(core);
+                varToCores[bin->right->name].insert(core);
+            }
+        }
+    }
+
+    // ========== Step 2: 构建 GEN/KILL（含间接依赖） ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, CoreSet> GEN, KILL;
+
+    // 【修复】间接依赖递归：某变量被重新定义时，递归找到所有受影响的“结果变量”
+    auto collectAffectedResults = [&](const std::string& var) {
+        std::unordered_set<std::string> affected;
+        std::vector<std::string> stk{ var };
+        while (!stk.empty()) {
+            auto v = stk.back(); stk.pop_back();
+            if (revVarDeps.count(v) == 0) continue;
+            for (const auto& res : revVarDeps[v]) {
+                if (affected.insert(res).second) {
+                    // res 是个“结果变量”，它自己也可能作为其他表达式的操作数继续向上影响
+                    stk.push_back(res);
+                }
+            }
+        }
+        return affected; // 所有受 var 影响的“结果变量”
+    };
+
+    for (auto& block : basicBlocks) {
+        CoreSet gen, kill;
+
+        for (auto& instr : block->instructions) {
+            auto defs = IRAnalyzer::getDefinedVariables(instr);
+
+            if (auto bin = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                // 【修复】GEN 使用统一的核心键（不含 result）
+                gen.insert(makeCore(bin));
+            }
+
+            // 【修复】KILL：对每个被定义变量，移除所有“直接依赖它的核心表达式” + “经由它影响到的结果变量参与的核心表达式”
+            for (const auto& d : defs) {
+                // 直接：凡是操作数里用到 d 的核心表达式都杀掉
+                if (varToCores.count(d)) {
+                    kill.insert(varToCores[d].begin(), varToCores[d].end());
+                }
+                // 间接：d 影响到的所有结果变量 res，它们参与的表达式也都杀掉
+                auto affectedResults = collectAffectedResults(d);
+                for (const auto& resVar : affectedResults) {
+                    if (varToCores.count(resVar)) {
+                        kill.insert(varToCores[resVar].begin(), varToCores[resVar].end());
+                    }
+                }
+            }
+        }
+
+        GEN[block]  = std::move(gen);
+        KILL[block] = std::move(kill);
+    }
+
+    // ========== Step 3: Tarjan 求 SCC（保持你的实现） ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> indexMap, lowlink;
+    std::unordered_set<std::shared_ptr<BasicBlock>> onStack;
+    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;
+    int indexCounter = 0;
+    std::vector<std::vector<std::shared_ptr<BasicBlock>>> sccList;
+
+    std::function<void(std::shared_ptr<BasicBlock>)> tarjan = [&](std::shared_ptr<BasicBlock> v) {
+        indexMap[v] = ++indexCounter;
+        lowlink[v] = indexMap[v];
+        tarjanStack.push(v);
+        onStack.insert(v);
+
+        for (auto w : v->successors) {
+            if (!indexMap.count(w)) {
+                tarjan(w);
+                lowlink[v] = std::min(lowlink[v], lowlink[w]);
+            } else if (onStack.count(w)) {
+                lowlink[v] = std::min(lowlink[v], indexMap[w]);
+            }
+        }
+
+        if (lowlink[v] == indexMap[v]) {
+            std::vector<std::shared_ptr<BasicBlock>> scc;
+            while (!tarjanStack.empty()) {
+                auto w = tarjanStack.top(); tarjanStack.pop();
+                onStack.erase(w);
+                scc.push_back(w);
+                if (w == v) break;
+            }
+            sccList.push_back(std::move(scc));
+        }
+    };
+
+    for (auto& b : basicBlocks) if (!indexMap.count(b)) tarjan(b);
+
+    // ========== Step 4: 数据流分析（Available Expressions，按 SCC 迭代） ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, CoreSet> IN, OUT;
+
+    // 【修复】初始化：OUT 为空；IN 对入口块为空，其余块初始化为全集（经典 available expressions）
+    for (auto& b : basicBlocks) {
+        OUT[b] = CoreSet{};
+        IN[b]  = allCores; // 先统一为全集
+    }
+    for (auto& b : basicBlocks) {
+        if (b->predecessors.empty()) IN[b].clear(); // 入口块 IN 为空
+    }
+
+    for (auto& scc : sccList) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto& block : scc) {
+                // IN[B] = ∩ OUT[pred]
+                CoreSet in;
+                if (block->predecessors.empty()) {
+                    in = CoreSet{};
+                } else {
+                    auto it = block->predecessors.begin();
+                    in = OUT[*it];
+                    ++it;
+                    for (; it != block->predecessors.end(); ++it) {
+                        CoreSet tmp;
+                        for (const auto& e : in) if (OUT[*it].count(e)) tmp.insert(e);
+                        in.swap(tmp);
+                    }
+                }
+
+                // OUT[B] = GEN[B] ∪ (IN[B] - KILL[B])
+                CoreSet out = GEN[block];
+                for (const auto& e : in) if (!KILL[block].count(e)) out.insert(e);
+
+                if (in != IN[block] || out != OUT[block]) {
+                    IN[block]  = std::move(in);
+                    OUT[block] = std::move(out);
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    // ========== Step 5: 替换公共子表达式（使用核心键） ==========
+    // exprToVar: 核心表达式 -> 已有的计算结果（变量/操作数）
+    std::unordered_map<ExprCore, std::shared_ptr<Operand>, ExprCoreHash> coreToVal;
+
+    // 【修复】基本安全检查（避免明显自引用）
+    auto isSafeToReplace = [&](const std::shared_ptr<BinaryOpInstr>& bin,
+                               const std::shared_ptr<Operand>& rep) -> bool {
+        if (!rep) return false;
+        // 不用自身
+        if (rep->name == bin->result->name) return false;
+        // 避免把使用了其输入的某个更晚值提前（粗粒度，但能挡住常见坑）
+        if (rep->name == bin->left->name || rep->name == bin->right->name) return true; // 纯复用上游值
+        return true;
+    };
+
+    for (auto& block : basicBlocks) {
+        // 当前块可用的核心表达式
+        CoreSet live = OUT[block];
+
+        for (auto it = block->instructions.begin(); it != block->instructions.end(); ++it) {
+            if (auto bin = std::dynamic_pointer_cast<BinaryOpInstr>(*it)) {
+                ExprCore core = makeCore(bin);
+
+                // 若已有同核心表达式的结果，尝试替换为赋值
+                if (coreToVal.count(core) && isSafeToReplace(bin, coreToVal[core])) {
+                    auto assign = std::make_shared<AssignInstr>(bin->result, coreToVal[core]); // x = y
+                    *it = assign;
+                } else {
+                    // 记录此核心表达式的“生产者变量”
+                    coreToVal[core] = bin->result;
+                    live.insert(core);
+                }
+            }
+
+            // 【修复】活跃集合失活：凡定义了变量 d，所有“把 d 当操作数”的核心表达式都失活
+            auto defs = IRAnalyzer::getDefinedVariables(*it);
+            for (const auto& d : defs) {
+                if (varToCores.count(d)) {
+                    for (const auto& c : varToCores[d]) {
+                        live.erase(c);
+                        // 同时更新 coreToVal（可选，不删也无功能性错误；删能降低误用风险）
+                        // 如果未来有需求，可在此处谨慎移除 coreToVal[c]
+                    }
+                }
+                // 【修复】间接影响：d 影响的所有结果变量 res，它们参与的表达式同样失活
+                auto affectedResults = collectAffectedResults(d);
+                for (const auto& resVar : affectedResults) {
+                    if (varToCores.count(resVar)) {
+                        for (const auto& c : varToCores[resVar]) {
+                            live.erase(c);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ========== Step 6: 汇总回全局指令 ==========
     this->instructions.clear();
     for (auto& block : basicBlocks)
         for (auto& instr : block->instructions)
