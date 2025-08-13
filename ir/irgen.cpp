@@ -2586,7 +2586,7 @@ void IRGenerator::commonSubexpressionElimination() {
                 std::string lhs = binOp->left->name;
                 std::string rhs = binOp->right->name;
                 if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL) {
-                    if (rhs < lhs) std::swap(lhs, rhs); // 【修改】标准化操作数顺序
+                    if (rhs < lhs) std::swap(lhs, rhs); // 【修改1】标准化操作数顺序
                 }
                 allExprs.insert(Expression{binOp->opcode, lhs, rhs, false});
             }
@@ -2601,12 +2601,12 @@ void IRGenerator::commonSubexpressionElimination() {
         std::unordered_set<std::string> definedVars;
 
         for (auto& instr : blk->instructions) {
-            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 【修改】统一获取定义变量
+            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 【修改2】统一获取定义变量
             for (const auto& var : defVars) {
                 if (!var.empty()) {
                     definedVars.insert(var);
 
-                    // 【修改】更新 varToOperand 映射
+                    // 【修改3】更新 varToOperand 映射
                     if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
                         if (binOp->result && binOp->result->name == var)
                             varToOperand[var] = binOp->result;
@@ -2623,7 +2623,7 @@ void IRGenerator::commonSubexpressionElimination() {
                 }
             }
 
-            // 【修改】GEN 集合只包含 BinaryOpInstr
+            // 【修改4】GEN 集合只包含 BinaryOpInstr
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
                 if (!isSideEffectInstr(instr)) {
                     std::string lhs = binOp->left->name;
@@ -2635,7 +2635,7 @@ void IRGenerator::commonSubexpressionElimination() {
             }
         }
 
-        // 【修改】计算 KILL 集合
+        // 【修改5】计算 KILL 集合
         ExprSet kill;
         for (auto& e : allExprs) {
             if (definedVars.count(e.lhs) || definedVars.count(e.rhs))
@@ -2692,49 +2692,41 @@ void IRGenerator::commonSubexpressionElimination() {
         std::unordered_map<Expression, std::string, ExpressionHash> exprToVar;
         for (auto& e : available) exprToVar[e] = "";
 
-        // 【修改】先收集所有替换操作，避免迭代器混乱
-        std::vector<std::pair<std::shared_ptr<IRInstr>, std::shared_ptr<AssignInstr>>> replacements;
-
-        for (auto& instr : blk->instructions) {
+        // 【修改6】直接按索引遍历，避免指针查找失效
+        for (size_t i = 0; i < blk->instructions.size(); ++i) {
+            auto instr = blk->instructions[i];
             auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
-            if (binOp && !isSideEffectInstr(instr)) {
-                std::string lhs = binOp->left->name;
-                std::string rhs = binOp->right->name;
-                if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL)
-                    if (rhs < lhs) std::swap(lhs, rhs);
-                Expression e{binOp->opcode, lhs, rhs, false};
+            if (!binOp || isSideEffectInstr(instr)) continue;
 
-                auto itVar = exprToVar.find(e);
-                if (available.count(e) && itVar != exprToVar.end() && !itVar->second.empty()) {
-                    auto rhsOperandIt = varToOperand.find(itVar->second);
-                    if (rhsOperandIt != varToOperand.end()) {
-                        auto assignInstr = std::make_shared<AssignInstr>(binOp->result, rhsOperandIt->second);
-                        replacements.emplace_back(instr, assignInstr);
+            std::string lhs = binOp->left->name;
+            std::string rhs = binOp->right->name;
+            if (binOp->opcode == OpCode::ADD || binOp->opcode == OpCode::MUL)
+                if (rhs < lhs) std::swap(lhs, rhs);
+            Expression e{binOp->opcode, lhs, rhs, false};
 
-                        exprToVar[e] = binOp->result->name;          // 【修改】更新映射
-                        varToOperand[binOp->result->name] = binOp->result; // 【修改】
-                    }
-                } else {
-                    exprToVar[e] = binOp->result->name;             // 【修改】记录新结果
+            auto itVar = exprToVar.find(e);
+            if (available.count(e) && itVar != exprToVar.end() && !itVar->second.empty()) {
+                // 【修改7】使用最新 Operand 替换
+                auto rhsOperandIt = varToOperand.find(itVar->second);
+                if (rhsOperandIt != varToOperand.end()) {
+                    blk->instructions[i] = std::make_shared<AssignInstr>(binOp->result, rhsOperandIt->second); // 替换
+                    exprToVar[e] = binOp->result->name;          // 更新映射
                     varToOperand[binOp->result->name] = binOp->result;
-                    available.insert(e);
                 }
-
-                // 【修改】杀死依赖当前定义的表达式
-                std::string defVar = binOp->result->name;
-                for (auto exprIt = available.begin(); exprIt != available.end();) {
-                    if (exprIt->lhs == defVar || exprIt->rhs == defVar) {
-                        exprToVar.erase(*exprIt);
-                        exprIt = available.erase(exprIt);
-                    } else ++exprIt;
-                }
+            } else {
+                exprToVar[e] = binOp->result->name;             // 记录新结果
+                varToOperand[binOp->result->name] = binOp->result;
+                available.insert(e);
             }
-        }
 
-        // 【修改】统一替换指令，避免迭代器问题
-        for (auto& rep : replacements) {
-            auto it = std::find(blk->instructions.begin(), blk->instructions.end(), rep.first);
-            if (it != blk->instructions.end()) *it = rep.second;
+            // 【修改8】杀死依赖当前定义变量的表达式，顺序安全
+            std::string defVar = binOp->result->name;
+            for (auto exprIt = available.begin(); exprIt != available.end();) {
+                if (exprIt->lhs == defVar || exprIt->rhs == defVar) {
+                    exprToVar.erase(*exprIt);
+                    exprIt = available.erase(exprIt);
+                } else ++exprIt;
+            }
         }
     }
 
