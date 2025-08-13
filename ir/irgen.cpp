@@ -1818,7 +1818,18 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
 
 // 复制传播优化实现
 // 复制传播状态类型：变量到变量的映射
-using CopyMap = std::unordered_map<std::string, std::string>;
+//using CopyMap = std::unordered_map<std::string, std::string>;
+using CopyMap = std::map<std::string, std::string>;
+
+// 稳定比较函数
+bool copyMapEqual(const CopyMap& a, const CopyMap& b) {
+    if (a.size() != b.size()) return false;
+    for (auto itA = a.begin(), itB = b.begin(); itA != a.end(); ++itA, ++itB) {
+        if (itA->first != itB->first || itA->second != itB->second) return false;
+    }
+    return true;
+}
+
 
 // 合并两个 CopyMap：求交集，只有两边相同映射保留
 CopyMap meetCopyMaps(const CopyMap& a, const CopyMap& b) {
@@ -2122,7 +2133,7 @@ void IRGenerator::copyPropagationCFG() {
         }
 
         // 如果状态改变，更新 outMap 并加入后继块
-        if (outEnv != outMap[bid]) {
+        if (!copyMapEqual(outEnv, outMap[bid])) {
             outMap[bid] = std::move(outEnv);
             // 将后继块加入worklist
             for (auto& succ : blk->successors) {
