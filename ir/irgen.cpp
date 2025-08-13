@@ -2577,12 +2577,12 @@ void IRGenerator::commonSubexpressionElimination() {
     auto basicBlocks = buildBasicBlocks();
     buildCFG(basicBlocks);
 
-    // ========== Step 1: 构建表达式全集（修改：result 置空） ==========
+    // ========== Step 1: 构建表达式全集 ==========
     ExprSet allExprs;
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, binOp->result->name}; // 【修改】result 不参与哈希
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; 
                 allExprs.insert(expr);
             }
         }
@@ -2601,15 +2601,30 @@ void IRGenerator::commonSubexpressionElimination() {
 
     for (auto& block : basicBlocks) {
         ExprSet gen, kill;
+
+         // 函数：递归删除所有依赖被重新定义变量的表达式
+        std::function<void(const std::string&)> killRecursive = [&](const std::string& var) {
+            if (!varToExpr.count(var)) return;
+            for (auto& e : varToExpr[var]) {
+                if (kill.count(e)) continue;       // 已经删除的跳过
+                kill.insert(e);                    // 标记为 KILL
+                if (!e.result.empty())             // 递归删除依赖 e.result 的表达式
+                    killRecursive(e.result);
+            }
+        };
+
         for (auto& instr : block->instructions) {
             auto defs = IRAnalyzer::getDefinedVariables(instr);
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; // 【修改】result 置空
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, binOp->result->name}; // 【修改】result 置空
                 gen.insert(expr);
             }
-            for (auto& d : defs) {
+            /*for (auto& d : defs) {
                 if (varToExpr.count(d)) kill.insert(varToExpr[d].begin(), varToExpr[d].end());
-            }
+            }*/
+           // 处理 KILL 集：递归删除所有间接依赖表达式
+            for (auto& d : defs)
+                killRecursive(d);
         }
         GEN[block] = gen;
         KILL[block] = kill;
