@@ -2582,7 +2582,7 @@ void IRGenerator::commonSubexpressionElimination() {
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; // 【修改】result 不参与哈希
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, binOp->result->name}; // 【修改】result 不参与哈希
                 allExprs.insert(expr);
             }
         }
@@ -2592,7 +2592,12 @@ void IRGenerator::commonSubexpressionElimination() {
     std::unordered_map<std::shared_ptr<BasicBlock>, ExprSet> GEN, KILL;
     std::unordered_map<std::string, std::unordered_set<Expression, ExpressionHash>> varToExpr;
 
-    for (auto& expr : allExprs) varToExpr[expr.result].insert(expr); // result 字段可能为空，可用于 GEN/KILL
+    //for (auto& expr : allExprs) varToExpr[expr.result].insert(expr); // result 字段可能为空，可用于 GEN/KILL
+    // 对每个表达式，记录其操作数对应的表达式
+    for (auto& expr : allExprs) {
+        varToExpr[expr.lhs].insert(expr);
+        varToExpr[expr.rhs].insert(expr);
+    }
 
     for (auto& block : basicBlocks) {
         ExprSet gen, kill;
@@ -2651,38 +2656,46 @@ void IRGenerator::commonSubexpressionElimination() {
     for (int i = 0; i < (int)sccList.size(); ++i)
         for (auto& b : sccList[i]) blockToScc[b] = i;
 
-    // ========== Step 4: 数据流分析（修改：可用表达式标准算法） ==========
+    // ========== Step 4: 数据流分析（SCC 内循环迭代） ==========
     std::unordered_map<std::shared_ptr<BasicBlock>, ExprSet> IN, OUT;
 
     // 初始化 OUT[B] = empty, IN[B] = allExprs
     for (auto& b : basicBlocks) {
         OUT[b] = ExprSet{};
-        IN[b] = allExprs; // 可用表达式初始假设所有表达式都可用
+        IN[b] = allExprs;
     }
 
-    bool changed = true;
-    while (changed) {
-        changed = false;
-        for (auto& block : basicBlocks) {
-            ExprSet in;
-            if (block->predecessors.empty()) in = ExprSet{}; // entry block 没有前驱
-            else {
-                // IN[B] = 交集 of OUT[pred]
-                in = OUT[*block->predecessors.begin()];
-                for (auto it = std::next(block->predecessors.begin()); it != block->predecessors.end(); ++it) {
-                    ExprSet temp;
-                    for (auto& e : in) if (OUT[*it].count(e)) temp.insert(e);
-                    in = std::move(temp);
+    // 对每个 SCC 进行迭代收敛
+    for (auto& scc : sccList) {
+        bool changed = true;
+        while (changed) {
+            changed = false;
+            for (auto& block : scc) {
+                // 计算 IN[B] = 交集(前驱 OUT)
+                ExprSet in;
+                if (block->predecessors.empty()) {
+                    in = ExprSet{}; // entry block
+                } else {
+                    auto itPred = block->predecessors.begin();
+                    in = OUT[*itPred];
+                    ++itPred;
+                    for (; itPred != block->predecessors.end(); ++itPred) {
+                        ExprSet temp;
+                        for (auto& e : in) if (OUT[*itPred].count(e)) temp.insert(e);
+                        in = std::move(temp);
+                    }
                 }
-            }
 
-            ExprSet out = GEN[block];
-            for (auto& e : in) if (!KILL[block].count(e)) out.insert(e);
+                // OUT[B] = GEN[B] ∪ (IN[B] - KILL[B])
+                ExprSet out = GEN[block];
+                for (auto& e : in) if (!KILL[block].count(e)) out.insert(e);
 
-            if (in != IN[block] || out != OUT[block]) {
-                IN[block] = std::move(in);
-                OUT[block] = std::move(out);
-                changed = true;
+                // 检查是否有变化
+                if (in != IN[block] || out != OUT[block]) {
+                    IN[block] = std::move(in);
+                    OUT[block] = std::move(out);
+                    changed = true;
+                }
             }
         }
     }
