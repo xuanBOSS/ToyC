@@ -2567,236 +2567,163 @@ void IRGenerator::copyPropagationCFG() {
     }
 }*/
 
+/**
+ * 执行公共子表达式消除优化（CSE，带SCC循环处理）
+ */
 void IRGenerator::commonSubexpressionElimination() {
-    using ExprCoreSet = std::unordered_set<Expression, ExpressionHash>;
+    using ExprSet = std::unordered_set<Expression, ExpressionHash>;
 
-    struct ExprValue {
-        std::string var;
-        int version = -1;
-        bool operator==(const ExprValue& other) const {
-            return var == other.var && version == other.version;
-        }
-    };
+    // ========== Step 0: 构建CFG ==========
+    auto basicBlocks = buildBasicBlocks();
+    buildCFG(basicBlocks);
 
-    // ====== Step 0: 构建基本块和CFG ======
-    auto blocks = buildBasicBlocks();
-    buildCFG(blocks);
-
-    std::unordered_map<std::string, std::shared_ptr<Operand>> varToOperand;
-
-    // ====== Step 1: 收集所有候选表达式 ======
-    ExprCoreSet allExprs;
-    auto norm = [](OpCode op, const std::string &a, const std::string &b) {
-        if (op == OpCode::ADD || op == OpCode::MUL)
-            return (b < a) ? std::pair{b, a} : std::pair{a, b};
-        return std::pair{a, b};
-    };
-
-    for (auto& blk : blocks) {
-        for (auto& instr : blk->instructions) {
+    // ========== Step 1: 构建表达式全集（修改：result 置空） ==========
+    ExprSet allExprs;
+    for (auto& block : basicBlocks) {
+        for (auto& instr : block->instructions) {
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                if (!isSideEffectInstr(instr)) {
-                    auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
-                    allExprs.insert(Expression{binOp->opcode, lhs, rhs, false});
-                }
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; // 【修改】result 不参与哈希
+                allExprs.insert(expr);
             }
         }
     }
 
-    // ====== Step 2: 计算 GEN/KILL ======
-    std::unordered_map<int, ExprCoreSet> genMap, killMap;
-    for (auto& blk : blocks) {
-        ExprCoreSet gen;
-        std::unordered_set<std::string> definedVars;
+    // ========== Step 2: 构建 GEN/KILL 集（修改：使用不含 result 的 Expression） ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, ExprSet> GEN, KILL;
+    std::unordered_map<std::string, std::unordered_set<Expression, ExpressionHash>> varToExpr;
 
-        for (auto& instr : blk->instructions) {
-            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 返回 vector<string>
-            for (const auto& var : defVars) {
-                if (!var.empty()) definedVars.insert(var);
-                // 更新 varToOperand
-                if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                    if (binOp->result && binOp->result->name == var) varToOperand[var] = binOp->result;
-                } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
-                    if (unaryOp->result && unaryOp->result->name == var) varToOperand[var] = unaryOp->result;
-                } else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
-                    if (assignInstr->target && assignInstr->target->name == var) varToOperand[var] = assignInstr->target;
-                } else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
-                    if (callInstr->result && callInstr->result->name == var) varToOperand[var] = callInstr->result;
-                }
-            }
+    for (auto& expr : allExprs) varToExpr[expr.result].insert(expr); // result 字段可能为空，可用于 GEN/KILL
 
+    for (auto& block : basicBlocks) {
+        ExprSet gen, kill;
+        for (auto& instr : block->instructions) {
+            auto defs = IRAnalyzer::getDefinedVariables(instr);
             if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                if (!isSideEffectInstr(instr)) {
-                    auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
-                    gen.insert(Expression{binOp->opcode, lhs, rhs, false});
-                }
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; // 【修改】result 置空
+                gen.insert(expr);
+            }
+            for (auto& d : defs) {
+                if (varToExpr.count(d)) kill.insert(varToExpr[d].begin(), varToExpr[d].end());
+            }
+        }
+        GEN[block] = gen;
+        KILL[block] = kill;
+    }
+
+    // ========== Step 3: SCC识别 ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> indexMap, lowlink;
+    std::unordered_set<std::shared_ptr<BasicBlock>> onStack;
+    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;
+    int indexCounter = 0;
+    std::vector<std::vector<std::shared_ptr<BasicBlock>>> sccList;
+
+    std::function<void(std::shared_ptr<BasicBlock>)> tarjan = [&](std::shared_ptr<BasicBlock> v) {
+        indexMap[v] = ++indexCounter;
+        lowlink[v] = indexMap[v];
+        tarjanStack.push(v);
+        onStack.insert(v);
+
+        for (auto w : v->successors) {
+            if (!indexMap.count(w)) {
+                tarjan(w);
+                lowlink[v] = std::min(lowlink[v], lowlink[w]);
+            } else if (onStack.count(w)) {
+                lowlink[v] = std::min(lowlink[v], indexMap[w]);
             }
         }
 
-        ExprCoreSet kill;
-        for (auto& e : allExprs) {
-            if (definedVars.count(e.lhs) || definedVars.count(e.rhs)) kill.insert(e);
+        if (lowlink[v] == indexMap[v]) {
+            std::vector<std::shared_ptr<BasicBlock>> scc;
+            while (!tarjanStack.empty()) {
+                auto w = tarjanStack.top();
+                tarjanStack.pop();
+                onStack.erase(w);
+                scc.push_back(w);
+                if (w == v) break;
+            }
+            sccList.push_back(std::move(scc));
         }
-        genMap[blk->id] = std::move(gen);
-        killMap[blk->id] = std::move(kill);
-    }
-
-    // ====== Step 3: 可用表达式数据流分析（优化） ======
-    std::unordered_map<int, ExprCoreSet> inMap, outMap;
-    for (auto& blk : blocks) {
-        outMap[blk->id] = allExprs;
-        inMap[blk->id]  = blk->predecessors.empty() ? ExprCoreSet{} : allExprs;
-    }
-
-    auto interSet = [](const ExprCoreSet& A, const ExprCoreSet& B) {
-        ExprCoreSet C;
-        for (auto& e : A) if (B.count(e)) C.insert(e);
-        return C;
     };
+
+    for (auto& b : basicBlocks) if (!indexMap.count(b)) tarjan(b);
+
+    std::unordered_map<std::shared_ptr<BasicBlock>, int> blockToScc;
+    for (int i = 0; i < (int)sccList.size(); ++i)
+        for (auto& b : sccList[i]) blockToScc[b] = i;
+
+    // ========== Step 4: 数据流分析（修改：可用表达式标准算法） ==========
+    std::unordered_map<std::shared_ptr<BasicBlock>, ExprSet> IN, OUT;
+
+    // 初始化 OUT[B] = empty, IN[B] = allExprs
+    for (auto& b : basicBlocks) {
+        OUT[b] = ExprSet{};
+        IN[b] = allExprs; // 可用表达式初始假设所有表达式都可用
+    }
 
     bool changed = true;
     while (changed) {
         changed = false;
-        for (auto& blk : blocks) {
-            int bid = blk->id;
-            ExprCoreSet inter;
-            if (!blk->predecessors.empty()) {
-                inter = outMap[blk->predecessors[0]->id];
-                for (size_t i = 1; i < blk->predecessors.size(); ++i) {
-                    ExprCoreSet temp;
-                    for (auto& e : inter)
-                        if (outMap[blk->predecessors[i]->id].count(e)) temp.insert(e); // --- 优化：避免重复分配
-                    inter.swap(temp);
+        for (auto& block : basicBlocks) {
+            ExprSet in;
+            if (block->predecessors.empty()) in = ExprSet{}; // entry block 没有前驱
+            else {
+                // IN[B] = 交集 of OUT[pred]
+                in = OUT[*block->predecessors.begin()];
+                for (auto it = std::next(block->predecessors.begin()); it != block->predecessors.end(); ++it) {
+                    ExprSet temp;
+                    for (auto& e : in) if (OUT[*it].count(e)) temp.insert(e);
+                    in = std::move(temp);
                 }
             }
-            inMap[bid] = std::move(inter);
 
-            ExprCoreSet outSet = genMap[bid];
-            for (auto& e : inMap[bid])
-                if (!killMap[bid].count(e)) outSet.insert(e);
+            ExprSet out = GEN[block];
+            for (auto& e : in) if (!KILL[block].count(e)) out.insert(e);
 
-            if (outSet != outMap[bid]) {
-                outMap[bid] = std::move(outSet);
+            if (in != IN[block] || out != OUT[block]) {
+                IN[block] = std::move(in);
+                OUT[block] = std::move(out);
                 changed = true;
             }
         }
     }
 
-    // ====== Step 3.5: 原地版本传播 + 延迟 kill（优化） ======
-    using VersionMap = std::unordered_map<std::string,int>;
-    using ExprValMap = std::unordered_map<Expression,ExprValue,ExpressionHash>;
-    std::unordered_map<int,VersionMap> versionOut;
-    std::unordered_map<int,ExprValMap> exprValOut;
+    // ========== Step 5: 替换公共子表达式（修改：result 不参与匹配） ==========
+    std::unordered_map<Expression, std::shared_ptr<Operand>, ExpressionHash> exprToVar;
+    for (auto& block : basicBlocks) {
+        ExprSet live = OUT[block];
+        for (auto it = block->instructions.begin(); it != block->instructions.end(); ++it) {
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(*it)) {
+                Expression expr{binOp->opcode, binOp->left->name, binOp->right->name, ""}; // 【修改】result 置空
 
-    bool flowChanged = true;
-    while (flowChanged) {
-        flowChanged = false;
-        for (auto& blk : blocks) {
-            int bid = blk->id;
-            VersionMap& curVer = versionOut[bid];
-            ExprValMap& curVal = exprValOut[bid];
-
-            size_t oldVerSize = curVer.size();
-            size_t oldValSize = curVal.size();
-
-            for (auto& p : blk->predecessors) {
-                for (auto& kv : versionOut[p->id]) {
-                    auto it = curVer.find(kv.first);
-                    if (it == curVer.end()) curVer[kv.first] = kv.second;
-                    else if (it->second != kv.second) it->second = -1;
-                }
-                for (auto& kv : exprValOut[p->id]) {
-                    auto it = curVal.find(kv.first);
-                    if (it == curVal.end()) curVal[kv.first] = kv.second;
-                    else if (it->second.var != kv.second.var || it->second.version != kv.second.version)
-                        curVal.erase(kv.first); // --- 优化：按 key 删除避免迭代器失效
+                if (exprToVar.count(expr)) {
+                    auto assign = std::make_shared<AssignInstr>(
+                        binOp->result,
+                        exprToVar[expr]
+                    );
+                    *it = assign;
+                } else {
+                    exprToVar[expr] = binOp->result;
+                    live.insert(expr);
                 }
             }
 
-            for (auto& instr : blk->instructions) {
-                auto defVars = IRAnalyzer::getDefinedVariables(instr);
-                for (auto& d : defVars) curVer[d] = (curVer[d]<0?0:curVer[d])+1;
-
-                auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
-                if (binOp && !isSideEffectInstr(instr) && binOp->result) {
-                    auto lhs = binOp->left->name;
-                    auto rhs = binOp->right->name;
-                    if (binOp->opcode==OpCode::ADD||binOp->opcode==OpCode::MUL)
-                        if(rhs<lhs) std::swap(lhs,rhs); // --- 优化：避免每次创建 pair
-                    Expression e{binOp->opcode,lhs,rhs,false};
-                    curVal[e] = ExprValue{binOp->result->name, curVer[binOp->result->name]};
+            auto defs = IRAnalyzer::getDefinedVariables(*it);
+            for (auto& d : defs) {
+                for (auto lit = live.begin(); lit != live.end(); ) {
+                    if (lit->result == d) lit = live.erase(lit);
+                    else ++lit;
                 }
             }
-
-            if (curVer.size()!=oldVerSize || curVal.size()!=oldValSize) flowChanged=true;
         }
     }
 
-    // ====== Step 4: 执行替换 ======
-    for (auto& blk : blocks) {
-        ExprCoreSet& available = inMap[blk->id]; // --- 优化：引用
-        VersionMap& varVersion = versionOut[blk->id];
-        ExprValMap& exprToVal = exprValOut[blk->id];
-
-        auto killAvailByVar = [&](const std::string& v){
-            std::vector<Expression> toErase;
-            for(auto& e: available) if(e.lhs==v||e.rhs==v) toErase.push_back(e);
-            for(auto& e: toErase){ exprToVal.erase(e); available.erase(e); }
-        };
-
-        for(size_t i=0;i<blk->instructions.size();++i){
-            auto instr=blk->instructions[i];
-            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
-            if(!binOp||isSideEffectInstr(instr)){
-                auto defVars = IRAnalyzer::getDefinedVariables(instr);
-                for(const auto& d:defVars){ ++varVersion[d]; killAvailByVar(d);}
-                continue;
-            }
-
-            auto lhs = binOp->left->name;
-            auto rhs = binOp->right->name;
-            if (binOp->opcode==OpCode::ADD||binOp->opcode==OpCode::MUL)
-                if(rhs<lhs) std::swap(lhs,rhs);
-            Expression e{binOp->opcode,lhs,rhs,false};
-            const std::string defVar=binOp->result->name;
-
-            bool canReplace=false;
-            std::shared_ptr<Operand> replOperand;
-            if(available.count(e)){
-                auto itVal=exprToVal.find(e);
-                if(itVal!=exprToVal.end()){
-                    const ExprValue& ev=itVal->second;
-                    auto itOp=varToOperand.find(ev.var);
-                    auto itVer=varVersion.find(ev.var);
-                    if(itOp!=varToOperand.end() && itVer!=varVersion.end() && itVer->second==ev.version){
-                        canReplace=true;
-                        replOperand=itOp->second;
-                    }
-                }
-            }
-
-            if(canReplace && replOperand && !defVar.empty()){
-                blk->instructions[i]=std::make_shared<AssignInstr>(binOp->result,replOperand);
-                ++varVersion[defVar];
-                varToOperand[defVar]=binOp->result;
-                killAvailByVar(defVar);
-                continue;
-            }
-
-            ++varVersion[defVar];
-            killAvailByVar(defVar);
-            varToOperand[defVar]=binOp->result;
-            exprToVal[e]=ExprValue{defVar,varVersion[defVar]};
-            available.insert(e);
-        }
-    }
-
-    // ====== Step 5: 重建指令序列 ======
+    // ========== Step 6: 更新全局指令序列 ==========
     this->instructions.clear();
-    for(auto& blk:blocks)
-        for(auto& instr:blk->instructions)
+    for (auto& block : basicBlocks)
+        for (auto& instr : block->instructions)
             this->instructions.push_back(instr);
 }
+
 
 
 

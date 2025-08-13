@@ -218,12 +218,14 @@ private:
         OpCode op;
         std::string lhs;
         std::string rhs;
+        std::string result;
         bool someFlag;       
 
         bool operator==(const Expression& other) const {
             return op == other.op &&
                 lhs == other.lhs &&
                 rhs == other.rhs &&
+                result == other.result &&
                 someFlag == other.someFlag;
         }
     };

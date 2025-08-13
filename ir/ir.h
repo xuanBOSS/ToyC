@@ -28,6 +28,7 @@ public:
 
     std::string toString() const;// 将操作数转换为字符串表示
     bool isTemp() const { return type == OperandType::TEMP; } // 检查操作数是否为临时变量
+
 };
 
 /*
