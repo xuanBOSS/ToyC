@@ -414,7 +414,7 @@ void IRGenerator::optimize() {
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
     copyPropagationCFG();       // 复制传播优化
-    commonSubexpressionElimination();   // 公共子表达式消除
+    //commonSubexpressionElimination();   // 公共子表达式消除
     deadCodeElimination();    // 删除无效果的代码
 
     
