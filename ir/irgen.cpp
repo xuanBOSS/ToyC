@@ -414,7 +414,7 @@ void IRGenerator::optimize() {
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
     copyPropagationCFG();       // 复制传播优化
-    //commonSubexpressionElimination();   // 公共子表达式消除
+    commonSubexpressionElimination();   // 公共子表达式消除
     deadCodeElimination();    // 删除无效果的代码
 
     
@@ -2568,30 +2568,27 @@ void IRGenerator::copyPropagationCFG() {
 }*/
 
 void IRGenerator::commonSubexpressionElimination() {
-    using ExprCoreSet = std::unordered_set<Expression, ExpressionHash>; // 无版本表达式集合（用于可用表达式分析）
+    using ExprCoreSet = std::unordered_set<Expression, ExpressionHash>;
 
-    struct ExprValue {                      // 【保留】表达式结果承载者
+    struct ExprValue {
         std::string var;
         int version = -1;
-
         bool operator==(const ExprValue& other) const {
             return var == other.var && version == other.version;
         }
     };
 
-    // ====== Step 0: 构建基本块和控制流图 ======
+    // ====== Step 0: 构建基本块和CFG ======
     auto blocks = buildBasicBlocks();
     buildCFG(blocks);
 
-    // 全局变量名到操作数的映射（用于快速拿到可替换的 Operand）
     std::unordered_map<std::string, std::shared_ptr<Operand>> varToOperand;
 
-    // ====== Step 1: 收集所有候选表达式（与原逻辑一致） ======
+    // ====== Step 1: 收集所有候选表达式 ======
     ExprCoreSet allExprs;
-    auto norm = [](OpCode op, const std::string& a, const std::string& b) {
-        if (op == OpCode::ADD || op == OpCode::MUL) {
+    auto norm = [](OpCode op, const std::string &a, const std::string &b) {
+        if (op == OpCode::ADD || op == OpCode::MUL)
             return (b < a) ? std::pair{b, a} : std::pair{a, b};
-        }
         return std::pair{a, b};
     };
 
@@ -2606,28 +2603,24 @@ void IRGenerator::commonSubexpressionElimination() {
         }
     }
 
-    // ====== Step 2: 计算每个块的 GEN/KILL（与原逻辑一致） ======
+    // ====== Step 2: 计算 GEN/KILL ======
     std::unordered_map<int, ExprCoreSet> genMap, killMap;
-
     for (auto& blk : blocks) {
         ExprCoreSet gen;
         std::unordered_set<std::string> definedVars;
 
         for (auto& instr : blk->instructions) {
-            // 收集定义变量 + 记录到 varToOperand（与原逻辑一致）
             auto defVars = IRAnalyzer::getDefinedVariables(instr);
             for (const auto& var : defVars) {
-                if (!var.empty()) {
-                    definedVars.insert(var);
-                    if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                        if (binOp->result && binOp->result->name == var) varToOperand[var] = binOp->result;
-                    } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
-                        if (unaryOp->result && unaryOp->result->name == var) varToOperand[var] = unaryOp->result;
-                    } else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
-                        if (assignInstr->target && assignInstr->target->name == var) varToOperand[var] = assignInstr->target;
-                    } else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
-                        if (callInstr->result && callInstr->result->name == var) varToOperand[var] = callInstr->result;
-                    }
+                if (!var.empty()) definedVars.insert(var);
+                if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                    if (binOp->result && binOp->result->name == var) varToOperand[var] = binOp->result;
+                } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                    if (unaryOp->result && unaryOp->result->name == var) varToOperand[var] = unaryOp->result;
+                } else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                    if (assignInstr->target && assignInstr->target->name == var) varToOperand[var] = assignInstr->target;
+                } else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                    if (callInstr->result && callInstr->result->name == var) varToOperand[var] = callInstr->result;
                 }
             }
 
@@ -2641,19 +2634,19 @@ void IRGenerator::commonSubexpressionElimination() {
 
         ExprCoreSet kill;
         for (auto& e : allExprs) {
-            if (definedVars.count(e.lhs) || definedVars.count(e.rhs))
-                kill.insert(e);
+            if (definedVars.count(e.lhs) || definedVars.count(e.rhs)) kill.insert(e);
         }
-        genMap[blk->id]  = std::move(gen);
+        genMap[blk->id] = std::move(gen);
         killMap[blk->id] = std::move(kill);
     }
 
-    // ====== Step 3: 可用表达式的数据流分析（与原逻辑一致） ======
+    // ====== Step 3: 可用表达式数据流分析 ======
     std::unordered_map<int, ExprCoreSet> inMap, outMap;
     for (auto& blk : blocks) {
         outMap[blk->id] = allExprs;
         inMap[blk->id]  = blk->predecessors.empty() ? ExprCoreSet{} : allExprs;
     }
+
     auto interSet = [](const ExprCoreSet& A, const ExprCoreSet& B) {
         ExprCoreSet C;
         for (auto& e : A) if (B.count(e)) C.insert(e);
@@ -2665,7 +2658,6 @@ void IRGenerator::commonSubexpressionElimination() {
         changed = false;
         for (auto& blk : blocks) {
             int bid = blk->id;
-
             ExprCoreSet inter;
             if (!blk->predecessors.empty()) {
                 inter = outMap[blk->predecessors[0]->id];
@@ -2687,208 +2679,117 @@ void IRGenerator::commonSubexpressionElimination() {
         }
     }
 
-    // ====== Step 3.5: 【新增】版本号与“表达式→值(变量,版本)”的前向数据流 ======
-    // 关键：跨基本块继承 (var->version) 与 (expr->(var,version))，合并时要求“一致”。
-    using VersionMap = std::unordered_map<std::string, int>;
-    using ExprValMap = std::unordered_map<Expression, ExprValue, ExpressionHash>;
+    // ====== Step 3.5: 原地版本传播 + 延迟 kill ======
+    using VersionMap = std::unordered_map<std::string,int>;
+    using ExprValMap = std::unordered_map<Expression,ExprValue,ExpressionHash>;
+    std::unordered_map<int,VersionMap> versionOut;
+    std::unordered_map<int,ExprValMap> exprValOut;
 
-    std::unordered_map<int, VersionMap> versionIn, versionOut;  // 【新增】
-    std::unordered_map<int, ExprValMap> exprValIn, exprValOut;  // 【新增】
-
-    auto mergeVersionFromPreds = [&](const std::vector<std::shared_ptr<BasicBlock>>& preds) {
-        VersionMap M;
-        if (preds.empty()) return M; // 入口块：空映射（未知，即未定义前不可替换）
-
-        // 收集所有前驱出现过的变量
-        std::unordered_set<std::string> keys;
-        for (auto& p : preds) {
-            for (auto& kv : versionOut[p->id]) keys.insert(kv.first);
-        }
-
-        // 若所有前驱对同一 var 的版本一致，则继承该版本；否则标记为 -1（不可靠）
-        for (auto& v : keys) {
-            bool first = true;
-            int val = -1;
-            for (auto& p : preds) {
-                auto it = versionOut[p->id].find(v);
-                int pv = (it == versionOut[p->id].end()) ? -1 : it->second;
-                if (first) { val = pv; first = false; }
-                else {
-                    if (pv != val) { val = -1; break; }
-                }
-            }
-            if (val != -1) M[v] = val;
-        }
-        return M;
-    };
-
-    auto mergeExprValFromPreds = [&](const std::vector<std::shared_ptr<BasicBlock>>& preds) {
-        ExprValMap R;
-        if (preds.empty()) return R; // 入口块：空
-
-        // 以第一个前驱为基准做“交集且值一致”
-        bool first = true;
-        for (auto& p : preds) {
-            if (first) {
-                R = exprValOut[p->id];
-                first = false;
-            } else {
-                ExprValMap tmp;
-                auto& other = exprValOut[p->id];
-                for (auto& kv : R) {
-                    auto it = other.find(kv.first);
-                    if (it != other.end()
-                        && it->second.var == kv.second.var
-                        && it->second.version == kv.second.version) {
-                        tmp.emplace(kv.first, kv.second);
-                    }
-                }
-                R.swap(tmp);
-            }
-        }
-        return R;
-    };
-
-    auto killByVar = [&](ExprValMap& m, const std::string& v) {   // 【新增】按被重新定义的变量杀死依赖它的表达式
-        for (auto it = m.begin(); it != m.end();) {
-            if (it->first.lhs == v || it->first.rhs == v) it = m.erase(it);
-            else ++it;
-        }
-    };
-
-    // 迭代直至 versionIn/Out 与 exprValIn/Out 收敛
-    bool flowChanged = true;                                        // 【新增】
-    while (flowChanged) {                                           // 【新增】
+    bool flowChanged = true;
+    while (flowChanged) {
         flowChanged = false;
-
         for (auto& blk : blocks) {
             int bid = blk->id;
+            VersionMap& curVer = versionOut[bid];
+            ExprValMap& curVal = exprValOut[bid];
 
-            // —— 合并前驱 ——                                // 【新增】
-            VersionMap inVer  = mergeVersionFromPreds(blk->predecessors);
-            ExprValMap inVal  = mergeExprValFromPreds(blk->predecessors);
+            size_t oldVerSize = curVer.size();
+            size_t oldValSize = curVal.size();
 
-            // —— 在块内模拟执行，产出 Out ——                 // 【新增】
-            VersionMap curVer = inVer;
-            ExprValMap curVal = inVal;
-
-            for (auto& instr : blk->instructions) {
-                // 对所有“定义”的变量：版本递增 + KILL 依赖它的表达式
-                auto defVars = IRAnalyzer::getDefinedVariables(instr);
-                for (const auto& d : defVars) {
-                    // 若之前从未出现，则设为 0 再 ++，使第一次定义版本变为 1
-                    int& v = curVer[d]; 
-                    v = (v < 0) ? 0 : v;
-                    ++v;
-                    killByVar(curVal, d);
+            for (auto& p : blk->predecessors) {
+                for (auto& kv : versionOut[p->id]) {
+                    auto it = curVer.find(kv.first);
+                    if (it == curVer.end()) curVer[kv.first] = kv.second;
+                    else if (it->second != kv.second) it->second = -1;
                 }
-
-                // 若是二元无副作用表达式：记录 e -> (defVar, curVer[defVar])
-                if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                    if (!isSideEffectInstr(instr) && binOp->result) {
-                        auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
-                        Expression e{binOp->opcode, lhs, rhs, false};
-                        const std::string defVar = binOp->result->name;
-                        auto it = curVer.find(defVar);
-                        int ver = (it == curVer.end()) ? -1 : it->second;
-                        if (ver >= 0) curVal[e] = ExprValue{defVar, ver};
-                    }
+                for (auto& kv : exprValOut[p->id]) {
+                    auto it = curVal.find(kv.first);
+                    if (it == curVal.end()) curVal[kv.first] = kv.second;
+                    else if (it->second.var != kv.second.var || it->second.version != kv.second.version)
+                        curVal.erase(it);
                 }
             }
 
-            // —— 写回 In/Out，检查是否变化 ——                // 【新增】
-            if (versionIn[bid] != inVer)  { versionIn[bid] = std::move(inVer);  flowChanged = true; }
-            if (exprValIn[bid] != inVal)  { exprValIn[bid] = std::move(inVal);  flowChanged = true; }
-            if (versionOut[bid] != curVer){ versionOut[bid]= std::move(curVer); flowChanged = true; }
-            if (exprValOut[bid] != curVal){ exprValOut[bid]= std::move(curVal); flowChanged = true; }
+            for (auto& instr : blk->instructions) {
+                auto defVars = IRAnalyzer::getDefinedVariables(instr);
+                for (auto& d : defVars) curVer[d] = (curVer[d]<0?0:curVer[d])+1;
+
+                auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+                if (binOp && !isSideEffectInstr(instr) && binOp->result) {
+                    auto [lhs,rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
+                    Expression e{binOp->opcode,lhs,rhs,false};
+                    curVal[e] = ExprValue{binOp->result->name, curVer[binOp->result->name]};
+                }
+            }
+
+            if (curVer.size()!=oldVerSize || curVal.size()!=oldValSize) flowChanged=true;
         }
     }
 
-    // ====== Step 4: 【修改】执行替换 —— 使用入口的 versionIn/exprValIn 作为初始状态 ======
+    // ====== Step 4: 执行替换 ======
     for (auto& blk : blocks) {
-        // 可用表达式集合（仍然沿用你前面算好的 IN 集合，用于双保险）
         ExprCoreSet available = inMap[blk->id];
+        VersionMap varVersion = versionOut[blk->id];
+        ExprValMap exprToVal = exprValOut[blk->id];
 
-        // 【修改】块内“当前状态”从入口继承，而不是重新 init 为 0
-        std::unordered_map<std::string, int> varVersion = versionIn[blk->id];               // 【修改】
-        std::unordered_map<Expression, ExprValue, ExpressionHash> exprToVal = exprValIn[blk->id]; // 【修改】
-
-        auto killAvailByVar = [&](const std::string& v) { // 与上面 killByVar 类似，但同步 available/exprToVal
-            for (auto it = available.begin(); it != available.end();) {
-                if (it->lhs == v || it->rhs == v) {
-                    exprToVal.erase(*it);
-                    it = available.erase(it);
-                } else ++it;
+        auto killAvailByVar = [&](const std::string& v){
+            for(auto it=available.begin();it!=available.end();){
+                if(it->lhs==v||it->rhs==v){ exprToVal.erase(*it); it=available.erase(it);}
+                else ++it;
             }
         };
 
-        for (size_t i = 0; i < blk->instructions.size(); ++i) {
-            auto instr = blk->instructions[i];
-
-            // 非二元或有副作用：只做版本/KILL 更新
+        for(size_t i=0;i<blk->instructions.size();++i){
+            auto instr=blk->instructions[i];
             auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
-            if (!binOp || isSideEffectInstr(instr)) {
+            if(!binOp||isSideEffectInstr(instr)){
                 auto defVars = IRAnalyzer::getDefinedVariables(instr);
-                for (const auto& d : defVars) {
-                    int& v = varVersion[d]; v = (v < 0) ? 0 : v; ++v;  // 【修改】基于入口版本递增
-                    killAvailByVar(d);
-                }
+                for(const auto& d:defVars){ ++varVersion[d]; killAvailByVar(d);}
                 continue;
             }
 
-            // 标准化当前表达式
-            auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
-            Expression e{binOp->opcode, lhs, rhs, false};
-            const std::string defVar = binOp->result ? binOp->result->name : std::string{};
+            auto [lhs,rhs]=norm(binOp->opcode,binOp->left->name,binOp->right->name);
+            Expression e{binOp->opcode,lhs,rhs,false};
+            const std::string defVar=binOp->result->name;
 
-            // 【修改】是否可替换：要求 (1) available 命中；(2) exprToVal 中命中；(3) 命中变量的当前版本与记录版本一致；(4) 能拿到 Operand
-            bool canReplace = false;
+            bool canReplace=false;
             std::shared_ptr<Operand> replOperand;
-
-            if (available.count(e)) {
-                auto itVal = exprToVal.find(e);
-                if (itVal != exprToVal.end()) {
-                    const ExprValue& ev = itVal->second;
-                    auto itOp = varToOperand.find(ev.var);
-                    if (itOp != varToOperand.end()) {
-                        auto itVer = varVersion.find(ev.var);
-                        if (itVer != varVersion.end() && itVer->second == ev.version) {
-                            canReplace = true;
-                            replOperand = itOp->second;
-                        }
+            if(available.count(e)){
+                auto itVal=exprToVal.find(e);
+                if(itVal!=exprToVal.end()){
+                    const ExprValue& ev=itVal->second;
+                    auto itOp=varToOperand.find(ev.var);
+                    auto itVer=varVersion.find(ev.var);
+                    if(itOp!=varToOperand.end() && itVer!=varVersion.end() && itVer->second==ev.version){
+                        canReplace=true;
+                        replOperand=itOp->second;
                     }
                 }
             }
 
-            if (canReplace && replOperand && !defVar.empty()) {
-                // 用赋值代替
-                blk->instructions[i] = std::make_shared<AssignInstr>(binOp->result, replOperand);
-                int& v = varVersion[defVar]; v = (v < 0) ? 0 : v; ++v; // 定义了 defVar，版本递增
-                varToOperand[defVar] = binOp->result;
-                killAvailByVar(defVar); // 赋值同样会杀死依赖 defVar 的表达式
-                // 赋值不产生新表达式，继续
+            if(canReplace && replOperand && !defVar.empty()){
+                blk->instructions[i]=std::make_shared<AssignInstr>(binOp->result,replOperand);
+                ++varVersion[defVar];
+                varToOperand[defVar]=binOp->result;
+                killAvailByVar(defVar);
                 continue;
             }
 
-            // 未替换：按真实二元运算处理定义
-            if (!defVar.empty()) {
-                int& v = varVersion[defVar]; v = (v < 0) ? 0 : v; ++v;
-                killAvailByVar(defVar);
-                varToOperand[defVar] = binOp->result;
-
-                // 将当前表达式加入块内可复用表（记录它由 defVar@版本 v 产生）
-                exprToVal[e] = ExprValue{defVar, v};     // 【修改】基于真实入口版本+块内定义累积后的版本
-                available.insert(e);
-            }
+            ++varVersion[defVar];
+            killAvailByVar(defVar);
+            varToOperand[defVar]=binOp->result;
+            exprToVal[e]=ExprValue{defVar,varVersion[defVar]};
+            available.insert(e);
         }
     }
 
-    // ====== Step 5: 重建指令序列（不变） ======
+    // ====== Step 5: 重建指令序列 ======
     this->instructions.clear();
-    for (auto& blk : blocks)
-        for (auto& instr : blk->instructions)
+    for(auto& blk:blocks)
+        for(auto& instr:blk->instructions)
             this->instructions.push_back(instr);
 }
+
 
 
 
