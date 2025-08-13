@@ -2610,9 +2610,10 @@ void IRGenerator::commonSubexpressionElimination() {
         std::unordered_set<std::string> definedVars;
 
         for (auto& instr : blk->instructions) {
-            auto defVars = IRAnalyzer::getDefinedVariables(instr);
+            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 返回 vector<string>
             for (const auto& var : defVars) {
                 if (!var.empty()) definedVars.insert(var);
+                // 更新 varToOperand
                 if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
                     if (binOp->result && binOp->result->name == var) varToOperand[var] = binOp->result;
                 } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
@@ -2640,7 +2641,7 @@ void IRGenerator::commonSubexpressionElimination() {
         killMap[blk->id] = std::move(kill);
     }
 
-    // ====== Step 3: 可用表达式数据流分析 ======
+    // ====== Step 3: 可用表达式数据流分析（优化） ======
     std::unordered_map<int, ExprCoreSet> inMap, outMap;
     for (auto& blk : blocks) {
         outMap[blk->id] = allExprs;
@@ -2662,15 +2663,17 @@ void IRGenerator::commonSubexpressionElimination() {
             if (!blk->predecessors.empty()) {
                 inter = outMap[blk->predecessors[0]->id];
                 for (size_t i = 1; i < blk->predecessors.size(); ++i) {
-                    inter = interSet(inter, outMap[blk->predecessors[i]->id]);
+                    ExprCoreSet temp;
+                    for (auto& e : inter)
+                        if (outMap[blk->predecessors[i]->id].count(e)) temp.insert(e); // --- 优化：避免重复分配
+                    inter.swap(temp);
                 }
             }
             inMap[bid] = std::move(inter);
 
             ExprCoreSet outSet = genMap[bid];
             for (auto& e : inMap[bid])
-                if (!killMap[bid].count(e))
-                    outSet.insert(e);
+                if (!killMap[bid].count(e)) outSet.insert(e);
 
             if (outSet != outMap[bid]) {
                 outMap[bid] = std::move(outSet);
@@ -2679,7 +2682,7 @@ void IRGenerator::commonSubexpressionElimination() {
         }
     }
 
-    // ====== Step 3.5: 原地版本传播 + 延迟 kill ======
+    // ====== Step 3.5: 原地版本传播 + 延迟 kill（优化） ======
     using VersionMap = std::unordered_map<std::string,int>;
     using ExprValMap = std::unordered_map<Expression,ExprValue,ExpressionHash>;
     std::unordered_map<int,VersionMap> versionOut;
@@ -2706,7 +2709,7 @@ void IRGenerator::commonSubexpressionElimination() {
                     auto it = curVal.find(kv.first);
                     if (it == curVal.end()) curVal[kv.first] = kv.second;
                     else if (it->second.var != kv.second.var || it->second.version != kv.second.version)
-                        curVal.erase(it);
+                        curVal.erase(kv.first); // --- 优化：按 key 删除避免迭代器失效
                 }
             }
 
@@ -2716,7 +2719,10 @@ void IRGenerator::commonSubexpressionElimination() {
 
                 auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
                 if (binOp && !isSideEffectInstr(instr) && binOp->result) {
-                    auto [lhs,rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
+                    auto lhs = binOp->left->name;
+                    auto rhs = binOp->right->name;
+                    if (binOp->opcode==OpCode::ADD||binOp->opcode==OpCode::MUL)
+                        if(rhs<lhs) std::swap(lhs,rhs); // --- 优化：避免每次创建 pair
                     Expression e{binOp->opcode,lhs,rhs,false};
                     curVal[e] = ExprValue{binOp->result->name, curVer[binOp->result->name]};
                 }
@@ -2728,15 +2734,14 @@ void IRGenerator::commonSubexpressionElimination() {
 
     // ====== Step 4: 执行替换 ======
     for (auto& blk : blocks) {
-        ExprCoreSet available = inMap[blk->id];
-        VersionMap varVersion = versionOut[blk->id];
-        ExprValMap exprToVal = exprValOut[blk->id];
+        ExprCoreSet& available = inMap[blk->id]; // --- 优化：引用
+        VersionMap& varVersion = versionOut[blk->id];
+        ExprValMap& exprToVal = exprValOut[blk->id];
 
         auto killAvailByVar = [&](const std::string& v){
-            for(auto it=available.begin();it!=available.end();){
-                if(it->lhs==v||it->rhs==v){ exprToVal.erase(*it); it=available.erase(it);}
-                else ++it;
-            }
+            std::vector<Expression> toErase;
+            for(auto& e: available) if(e.lhs==v||e.rhs==v) toErase.push_back(e);
+            for(auto& e: toErase){ exprToVal.erase(e); available.erase(e); }
         };
 
         for(size_t i=0;i<blk->instructions.size();++i){
@@ -2748,7 +2753,10 @@ void IRGenerator::commonSubexpressionElimination() {
                 continue;
             }
 
-            auto [lhs,rhs]=norm(binOp->opcode,binOp->left->name,binOp->right->name);
+            auto lhs = binOp->left->name;
+            auto rhs = binOp->right->name;
+            if (binOp->opcode==OpCode::ADD||binOp->opcode==OpCode::MUL)
+                if(rhs<lhs) std::swap(lhs,rhs);
             Expression e{binOp->opcode,lhs,rhs,false};
             const std::string defVar=binOp->result->name;
 
@@ -2789,6 +2797,7 @@ void IRGenerator::commonSubexpressionElimination() {
         for(auto& instr:blk->instructions)
             this->instructions.push_back(instr);
 }
+
 
 
 
