@@ -712,7 +712,7 @@ void CodeGenerator::emitPrologue(const std::string& funcName) {
         emitInstruction("li t0, " + std::to_string(totalFrameSize));
         emitInstruction("add fp, sp, t0");
     }
-//---------------------修改18-----------------------------
+
     // 5. 保存被调用者寄存器
     saveCalleeSavedRegs();
 
@@ -728,7 +728,6 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
     
     // 恢复被调用者保存的寄存器
     restoreCalleeSavedRegs();
-//---------------------修改18------------------------
     
     // 恢复帧指针和返回地址
     if (frameSize - 8 <= 2047) {
@@ -754,13 +753,11 @@ void CodeGenerator::emitEpilogue(const std::string& funcName) {
         emitInstruction("li t0, " + std::to_string(frameSize));
         emitInstruction("add sp, sp, t0");
     }
-//---------------------修改18------------------------
+
     // 返回
     emitInstruction("ret");
 }
 
-
-//-----------------------修改18------------------------------
 void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::string& reg) {
     switch (op->type) {
         case OperandType::CONSTANT:
@@ -799,7 +796,6 @@ void CodeGenerator::loadOperand(const std::shared_ptr<Operand>& op, const std::s
     }
 }
 
-//-----------------------修改18----------------------------
 void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<Operand>& op) {
     if (op->type == OperandType::VARIABLE || op->type == OperandType::TEMP) {
         auto it = regAlloc.find(op->name);
@@ -824,7 +820,6 @@ void CodeGenerator::storeRegister(const std::string& reg, const std::shared_ptr<
         std::cerr << "错误: 无法存储到非变量操作数" << std::endl;
     }
 }
-//---------------------------修改18--------------------------------
 
 // 获取操作数的栈偏移
 // 如果操作数尚未分配栈空间，则分配新的栈空间
@@ -963,9 +958,6 @@ void CodeGenerator::restoreCalleeSavedRegs() {
         }
     }
 }
-
-
-//----------------------修改18------------------------------
 
 // 初始化寄存器信息
 void CodeGenerator::initializeRegisters() {

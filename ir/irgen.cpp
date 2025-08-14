@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 /**
  * IR生成和优化的实现
  * 
@@ -61,6 +62,7 @@ std::vector<std::string> IRInstr::getDefRegisters() {
 std::vector<std::string> IRInstr::getUseRegisters() {
     return {};
 }
+
 
 //------------------------------------------------------------------------------
 // IR指令字符串表示方法
@@ -262,9 +264,7 @@ std::shared_ptr<Operand> IRGenerator::getTopOperand() {
  * 在进入新的代码块、函数或源代码中的其他作用域定义结构时调用。
  */
 void IRGenerator::enterScope() {
-//------------------------修改7-------------------------------
     scopeDepth++;
-//------------------------修改7-------------------------------
     scopeStack.push_back(std::map<std::string, std::shared_ptr<Operand>>());
 }
 
@@ -275,9 +275,7 @@ void IRGenerator::enterScope() {
  * 在退出代码块、函数或其他作用域定义结构时调用。
  */
 void IRGenerator::exitScope() {
-//------------------------修改7-------------------------------
     scopeDepth--;
-//------------------------修改7-------------------------------
     if (!scopeStack.empty()) {
         scopeStack.pop_back();
     }
@@ -360,7 +358,6 @@ void IRGenerator::defineVariable(const std::string& name, std::shared_ptr<Operan
     defineVariable(name, var);
     return var;
 }*/
-//--------------------------修改7------------------------------
 std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name, bool createInCurrentScope) {
     if (createInCurrentScope) {
         // 为变量声明：使用带作用域信息的唯一名称创建新变量
@@ -382,7 +379,7 @@ std::shared_ptr<Operand> IRGenerator::getVariable(const std::string& name, bool 
     defineVariable(name, var);
     return var;
 }
-//--------------------------修改7------------------------------
+
 
 /**
  * 将IR指令写入文件。
@@ -413,7 +410,11 @@ void IRGenerator::optimize() {
     // 按顺序应用每种优化技术
     constantFolding();        // 在编译时评估常量表达式
     constantPropagationCFG();    // 在代码中传播常量值
+    copyPropagationCFG();       // 复制传播优化
+    commonSubexpressionElimination();   // 公共子表达式消除
     deadCodeElimination();    // 删除无效果的代码
+
+    
     //controlFlowOptimization(); // 优化控制流（跳转、分支等）
 }
 
@@ -505,174 +506,6 @@ void IRGenerator::constantFolding() {
  * 跟踪被赋予常量值的变量，并用常量替换这些变量的使用。
  * 这使得进一步的优化机会，如常量折叠成为可能。
  */
-/*void IRGenerator::constantPropagation() {
-    // 从变量名到其常量值的映射（如果已知）
-    std::unordered_map<std::string, std::shared_ptr<Operand>> constants;
-    bool changed = true;
-    int maxIterations = 2; // 限制最大迭代次数
-    int iteration = 0;
-    
-    // 重复直到没有更多变化
-    while (changed) {
-        changed = false;
-        iteration++;
-        
-        // 遍历所有指令，查找常量赋值
-        for (size_t i = 0; i < instructions.size(); ++i) {
-            auto instr = instructions[i];
-            
-            // 如果是赋值语句
-            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
-                // 如果源操作数是常量，记录它
-                if (assignInstr->source->type == OperandType::CONSTANT) {
-                    if (assignInstr->target->type == OperandType::VARIABLE || 
-                        assignInstr->target->type == OperandType::TEMP) {
-                        constants[assignInstr->target->name] = assignInstr->source;
-                    }
-                } 
-                // 如果源操作数是变量或临时变量，尝试替换为已知常量
-                else if (assignInstr->source->type == OperandType::VARIABLE || 
-                          assignInstr->source->type == OperandType::TEMP) {
-                    // 如果从另一个已知具有常量值的变量赋值，传播它
-                    //auto it = constants.find(assignInstr->source->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(assignInstr->source->name, constants, visited);
-                    if (resolved) {
-                        // 替换为直接从常量赋值
-                        assignInstr->source = resolved;
-                        changed = true;
-                    }
-                }
-                
-                // 目标变量可能不再是常量，除非我们刚刚给它赋了常量值
-                if (assignInstr->source->type != OperandType::CONSTANT) {
-                    constants.erase(assignInstr->target->name);
-                }
-            }
-            // 对于二元操作，用已知常量替换变量
-            else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
-                // 尝试替换左操作数
-                if (binOp->left->type == OperandType::VARIABLE || 
-                    binOp->left->type == OperandType::TEMP) {
-                    //auto it = constants.find(binOp->left->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(binOp->left->name, constants, visited);
-                    if (resolved) {
-                        binOp->left = resolved;
-                        changed = true;
-                    }
-                }
-                
-                // 尝试替换右操作数
-                if (binOp->right->type == OperandType::VARIABLE || 
-                    binOp->right->type == OperandType::TEMP) {
-                    //auto it = constants.find(binOp->right->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(binOp->right->name, constants, visited);
-                    if (resolved) {
-                        binOp->right = resolved;
-                        changed = true;
-                    }
-                }
-                
-                // 结果变量不再是常量
-                constants.erase(binOp->result->name);
-            }
-            // 对于一元操作，用已知常量替换变量
-            else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
-                if (unaryOp->operand->type == OperandType::VARIABLE || 
-                    unaryOp->operand->type == OperandType::TEMP) {
-                    //auto it = constants.find(unaryOp->operand->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(unaryOp->operand->name, constants, visited);
-                    if (resolved) {
-                        unaryOp->operand = resolved;
-                        changed = true;
-                    }
-                }
-                
-                // 结果变量不再是常量
-                constants.erase(unaryOp->result->name);
-            }
-            // 对于函数调用、参数和返回，如果已知则使用常量
-            else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
-                // 结果变量不再是常量
-                if (callInstr->result) {
-                    constants.erase(callInstr->result->name);
-                }
-            }
-            else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
-                if (paramInstr->param->type == OperandType::VARIABLE || 
-                    paramInstr->param->type == OperandType::TEMP) {
-                    //auto it = constants.find(paramInstr->param->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(paramInstr->param->name, constants, visited);
-                    if (resolved) {
-                        paramInstr->param = resolved;
-                        changed = true;
-                    }
-                }
-            }
-            else if (auto returnInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
-                if (returnInstr->value && 
-                   (returnInstr->value->type == OperandType::VARIABLE || 
-                    returnInstr->value->type == OperandType::TEMP)) {
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(returnInstr->value->name, constants, visited);
-                    if (resolved) {
-                        returnInstr->value = resolved;
-                        changed = true;
-                    }
-                }
-            }
-            else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
-                if (ifGotoInstr->condition->type == OperandType::VARIABLE || 
-                    ifGotoInstr->condition->type == OperandType::TEMP) {
-                    //auto it = constants.find(ifGotoInstr->condition->name);
-                    std::unordered_set<std::string> visited;
-                    auto resolved = resolveConstant(ifGotoInstr->condition->name, constants, visited);
-                    if (resolved) {
-                        ifGotoInstr->condition = resolved;
-                        changed = true;
-                    }
-                }
-            }
-        }
-        
-        // 如果我们做了更改，再次运行常量折叠
-        if (changed) {
-            constantFolding();
-        }
-
-        if (iteration >= maxIterations)  break;
-        
-    }
-}
-
-const int MAX_PROPAGATION_DEPTH = 20;
-std::shared_ptr<Operand> IRGenerator::resolveConstant(
-    const std::string& name,
-    std::unordered_map<std::string, std::shared_ptr<Operand>>& constants,
-    std::unordered_set<std::string>& visited,
-    int depth
-) {
-    // 防止进入无限循环
-    if (depth > MAX_PROPAGATION_DEPTH) return nullptr; // 深度检测
-    if (visited.count(name)) return nullptr;           // 检测到环，直接返回
-    visited.insert(name);
-
-    // 寻找依赖的变量
-    auto it = constants.find(name);
-    if (it == constants.end()) return nullptr;
-
-    auto operand = it->second;
-    if (operand->type == OperandType::CONSTANT) return operand;
-    if (operand->type == OperandType::VARIABLE || operand->type == OperandType::TEMP) {
-        return resolveConstant(operand->name, constants, visited, depth + 1);
-    }
-    return nullptr;
-}*/
-
 /*
 *   常量传播优化
 *
@@ -771,40 +604,6 @@ std::vector<std::pair<BlockID, BlockID>> findBackEdges(
  * @param blocks 基本块集合（BlockID -> Block结构体）
  * @return 包含循环体内所有被赋值变量名的集合
  */
-/*std::unordered_set<std::string> IRGenerator::getLoopDefs(
-    const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
-    BlockID fromBlk, BlockID toBlk,
-    const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
-{
-    std::unordered_set<BlockID> visited;    // 记录已访问的基本块
-    std::unordered_set<std::string> defs;   // 存储发现的变量定义
-    std::vector<BlockID> stack = {toBlk};   // 初始化DFS栈（从循环入口开始）
-
-    while (!stack.empty()) {
-        BlockID blk = stack.back();
-        stack.pop_back();
-
-        // 跳过已处理块
-        if (visited.count(blk)) continue;
-        visited.insert(blk);
-
-        // 遍历当前块的所有指令，收集赋值语句的目标变量
-        for (auto& inst : blocks.at(blk).instructions) {
-            if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(inst)) {
-                defs.insert(assignInstr->target->name); // 记录被赋值的变量
-            }
-        }
-
-        // 处理后继块（深度优先遍历）
-        for (auto succ : cfg.at(blk)) {
-            // 关键逻辑：跳过直接回到循环入口的回边（避免无限循环）
-            if (succ != fromBlk) { // 避免直接走回边出口
-                stack.push_back(succ);
-            }
-        }
-    }
-    return defs;
-}*/
 std::unordered_set<std::string> IRGenerator::getLoopDefs(
     const std::unordered_set<BlockID>& loopBlocks,
     const std::unordered_map<BlockID, IRGenerator::BasicBlock>& blocks)
@@ -1006,6 +805,44 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
     std::vector<std::shared_ptr<BasicBlock>> blocks;    // 存储生成的基本块
     const auto& instrs = this->instructions; 
 
+    // === 修改点1：构建前去重已有标签 ===
+    std::unordered_set<std::string> seenLabels;
+    std::unordered_map<std::string, std::string> oldToNew; // 记录标签改名映射
+    for (auto &instr : this->instructions) {
+        if (auto lbl = std::dynamic_pointer_cast<LabelInstr>(instr)) {
+            if (seenLabels.count(lbl->label)) {
+                std::string newName = lbl->label + "_dup" + std::to_string(seenLabels.size());
+                oldToNew[lbl->label] = newName;
+                lbl->label = newName;
+            }
+            seenLabels.insert(lbl->label);
+        }
+    }
+    
+    // === 修改点4：同步更新跳转指令的目标标签 ===
+    for (auto &instr : this->instructions) {
+        if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+            if (oldToNew.count(ifg->target->name)) {
+                ifg->target->name = oldToNew[ifg->target->name];
+            }
+        } else if (auto g = std::dynamic_pointer_cast<GotoInstr>(instr)) {
+            if (oldToNew.count(g->target->name)) {
+                g->target->name = oldToNew[g->target->name];
+            }
+        }
+    }
+
+    // === 修改点2：提供生成唯一标签的工具函数 ===
+    auto makeUniqueLabel = [&](const std::string &base) {
+        std::string candidate = base;
+        int counter = 0;
+        while (seenLabels.count(candidate)) {
+            candidate = base + "_" + std::to_string(counter++);
+        }
+        seenLabels.insert(candidate);
+        return candidate;
+    };
+
     // 首先扫描得到 label -> index 映射
     std::unordered_map<std::string, int> labelToIndex;
     for (int i = 0; i < (int)instrs.size(); ++i) {
@@ -1087,7 +924,7 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
 
         // 每一个基本块都有各自唯一的标签
         // 如果第一条指令不是标签，生成一个新标签指令
-        if (block->instructions.empty() || 
+        /*if (block->instructions.empty() || 
             !std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
             std::string newLabel = "__block" + std::to_string(block->id); // 唯一标签名
             auto lblInstr = std::make_shared<LabelInstr>(newLabel);
@@ -1095,6 +932,18 @@ std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlo
             block->label = newLabel; // 更新块标签
         } else {
             // 第一条是标签
+            auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
+            block->label = lbl->label;
+        }*/
+
+        // === 修改点3：新标签使用 makeUniqueLabel 确保全局唯一 ===
+        if (block->instructions.empty() || 
+            !std::dynamic_pointer_cast<LabelInstr>(block->instructions.front())) {
+            std::string newLabel = makeUniqueLabel("__block" + std::to_string(block->id));
+            auto lblInstr = std::make_shared<LabelInstr>(newLabel);
+            block->instructions.insert(block->instructions.begin(), lblInstr);
+            block->label = newLabel;
+        } else {
             auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
             block->label = lbl->label;
         }
@@ -1532,11 +1381,11 @@ void IRGenerator::constantPropagationCFG() {
  * 4. 反向扫描指令，删除未被使用的定义
  */
 void IRGenerator::deadCodeElimination() {
-     // Step 0: 构建基本块和控制流图
+    // ========== Step 0: 构建CFG ==========
     auto basicBlocks = buildBasicBlocks();
     buildCFG(basicBlocks);
 
-    // Step 1: 收集 use / def
+    // ========== Step 1: 收集use/def集合 ==========
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> use, def;
     for (auto& block : basicBlocks) {
         for (auto& instr : block->instructions) {
@@ -1559,33 +1408,32 @@ void IRGenerator::deadCodeElimination() {
     }
 
 
-    // -----------------------------
-    // MODIFIED: 先计算 SCC（Tarjan），以便识别循环与循环出口
-    // -----------------------------
-    /* MODIFIED START */
-    // Tarjan SCC implementation
+    // ========== MODIFIED: Tarjan算法识别循环(SCC) ==========
     std::unordered_map<std::shared_ptr<BasicBlock>, int> indexMap;
     std::unordered_map<std::shared_ptr<BasicBlock>, int> lowlink;
     std::unordered_set<std::shared_ptr<BasicBlock>> onStack;
-    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;
+    std::stack<std::shared_ptr<BasicBlock>> tarjanStack;    // 存储所有强连通分量（SCC）
     int indexCounter = 0;
     std::vector<std::vector<std::shared_ptr<BasicBlock>>> sccList;
 
+    // Tarjan的DFS实现
     std::function<void(std::shared_ptr<BasicBlock>)> tarjan = [&](std::shared_ptr<BasicBlock> v) {
         indexMap[v] = ++indexCounter;
         lowlink[v] = indexMap[v];
         tarjanStack.push(v);
         onStack.insert(v);
 
+        // 遍历后继节点
         for (auto w : v->successors) {
-            if (!indexMap.count(w)) {
-                tarjan(w);
+            if (!indexMap.count(w)) {   // 未访问过的节点
+                tarjan(w);  
                 lowlink[v] = std::min(lowlink[v], lowlink[w]);
-            } else if (onStack.count(w)) {
+            } else if (onStack.count(w)) {  // 已在栈中的节点（形成环）
                 lowlink[v] = std::min(lowlink[v], indexMap[w]);
             }
         }
 
+        // 发现SCC（lowlink[v] == indexMap[v]表示找到一个强连通分量）
         if (lowlink[v] == indexMap[v]) {
             std::vector<std::shared_ptr<BasicBlock>> scc;
             while (!tarjanStack.empty()) {
@@ -1593,23 +1441,24 @@ void IRGenerator::deadCodeElimination() {
                 tarjanStack.pop();
                 onStack.erase(w);
                 scc.push_back(w);
-                if (w == v) break;
+                if (w == v) break;  // 弹出直到当前节点
             }
             sccList.push_back(std::move(scc));
         }
     };
 
+    // 对所有块执行Tarjan算法
     for (auto& b : basicBlocks) {
         if (!indexMap.count(b)) tarjan(b);
     }
 
-    // map block -> scc id
+    // 建立块到SCC的映射（block -> SCC ID）
     std::unordered_map<std::shared_ptr<BasicBlock>, int> blockToScc;
     for (int i = 0; i < (int)sccList.size(); ++i) {
         for (auto& b : sccList[i]) blockToScc[b] = i;
     }
 
-    // Precompute for each scc the set of exit blocks (successors not in this scc)
+    // 预计算每个SCC的出口块（后继不在同一SCC的块）
     std::unordered_map<int, std::unordered_set<std::shared_ptr<BasicBlock>>> sccExitBlocks;
     for (int i = 0; i < (int)sccList.size(); ++i) {
         for (auto& b : sccList[i]) {
@@ -1620,9 +1469,8 @@ void IRGenerator::deadCodeElimination() {
             }
         }
     }
-    /* MODIFIED END */
-    // -----------------------------
 
+    
 
     // Step 2: 计算活跃变量（live_in和live_out）
     std::unordered_map<std::shared_ptr<BasicBlock>, std::unordered_set<std::string>> live_in, live_out;
@@ -1642,14 +1490,8 @@ void IRGenerator::deadCodeElimination() {
 
         // live_out = 后继的 live_in 并集
         std::unordered_set<std::string> new_live_out;
-        /*for (auto succ : block->successors) {
-            new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
-        }*/
-       // -----------------------------
-        // MODIFIED: 回边/循环内部处理 —— 如果某条边属于同一 SCC（即循环内部的边），
-        //           则把该 SCC 的所有出口块的 live_in 合并进来（保证循环外使用传播回循环体）
-        // -----------------------------
-        /* MODIFIED START */
+        
+        // MODIFIED: 区分普通边和回边（循环内部边）
         int thisScc = -1;
         if (blockToScc.count(block)) thisScc = blockToScc[block];
 
@@ -1666,12 +1508,11 @@ void IRGenerator::deadCodeElimination() {
                 // 同时也可以合并 succ 本身的 live_in（保险起见）
                 new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
             } else {
-                // 普通边（跨 SCC）
+                // 普通边（跨 SCC）：直接合并后继的live_in
                 new_live_out.insert(live_in[succ].begin(), live_in[succ].end());
             }
         }
-        /* MODIFIED END */
-        // -----------------------------
+
 
         // live_in = use ∪ (live_out - def)
         std::unordered_set<std::string> new_live_in = use[block];
@@ -1694,6 +1535,7 @@ void IRGenerator::deadCodeElimination() {
             }
         }
     }
+
 
 
     // Step 3: 反向删除死代码
@@ -1765,6 +1607,617 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
         std::dynamic_pointer_cast<ParamInstr>(instr) != nullptr;                // 参数传递
 }
 
+// 复制传播优化实现
+// 复制传播状态类型：变量到变量的映射
+//using CopyMap = std::unordered_map<std::string, std::string>;
+using CopyMap = std::map<std::string, std::string>;
+
+// 稳定比较函数
+bool copyMapEqual(const CopyMap& a, const CopyMap& b) {
+    if (a.size() != b.size()) return false;
+    for (auto itA = a.begin(), itB = b.begin(); itA != a.end(); ++itA, ++itB) {
+        if (itA->first != itB->first || itA->second != itB->second) return false;
+    }
+    return true;
+}
+
+
+// 合并两个 CopyMap：求交集，只有两边相同映射保留
+CopyMap meetCopyMaps(const CopyMap& a, const CopyMap& b) {
+    CopyMap result;
+    for (auto& [var, mappedVar] : a) {
+        auto it = b.find(var);
+        if (it != b.end() && it->second == mappedVar) {
+            result[var] = mappedVar;
+        }
+    }
+    return result;
+}
+
+// 迁移函数：根据指令更新 CopyMap
+/*void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
+
+    // 简化：只处理简单赋值 instr: x = y
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        auto defVar = assign->target->name;
+        // 如果赋值是简单复制
+        if (assign->isSimpleCopy()) { // 你需要实现判断是否简单复制的接口，比如源操作数是变量而非常量表达式
+            auto srcVar = assign->source->name;
+            env[defVar] = srcVar;
+        } else {
+            // 非复制赋值，变量重新定义，去除之前映射
+            env.erase(defVar);
+            // 这里简化不处理映射链中其他变量映射到defVar的情况
+        }
+    } else {
+        // 其它指令可能定义变量，需删除对应映射
+        auto defs = IRAnalyzer::getDefinedVariables(instr);
+        for (auto& d : defs) {
+            env.erase(d);
+        }
+    }
+}*/
+void applyCopyTransfer(CopyMap& env, const std::shared_ptr<IRInstr>& instr) {
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        auto defVar = assign->target->name;
+
+        if (assign->isSimpleCopy()) {
+            auto srcVar = assign->source->name;
+
+            // 1. 删除所有映射中指向 defVar 的条目（防止旧映射失效后残留）
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == defVar) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+
+            // 2. 检查是否会产生映射环（比如 srcVar 最终映射回 defVar）
+            /*std::string cur = srcVar;
+            while (env.find(cur) != env.end()) {
+                cur = env[cur];
+                if (cur == defVar) {
+                    // 发现环路，不能建立映射，直接清理 defVar
+                    env.erase(defVar);
+                    return;
+                }
+            }*/
+            // === 修改点1：映射环检测改用访问集合防止死循环 ===
+            std::unordered_set<std::string> visited;   // 记录访问过的变量
+            std::string cur = srcVar;
+            while (env.find(cur) != env.end()) {
+                if (visited.count(cur)) {
+                    // 访问过，检测到环，停止查找，防止死循环
+                    break;
+                }
+                visited.insert(cur);
+
+                cur = env[cur];
+                if (cur == defVar) {
+                    // 发现环路，不能建立映射，直接清理 defVar 映射，返回
+                    env.erase(defVar);
+                    return;
+                }
+            }
+
+            // 3. 更新映射
+            env[defVar] = srcVar;
+        } else {
+            // 非简单复制，变量重新定义，删除 defVar 及指向 defVar 的映射
+            env.erase(defVar);
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == defVar) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    } else {
+        // 对于其它指令，删除所有定义变量对应的映射以及指向它们的映射
+        auto defs = IRAnalyzer::getDefinedVariables(instr);
+        for (auto& d : defs) {
+            env.erase(d);
+            for (auto it = env.begin(); it != env.end(); ) {
+                if (it->second == d) {
+                    it = env.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+    }
+}
+
+
+// 替换指令中使用变量，根据 CopyMap 做替换
+void replaceCopyUses(std::shared_ptr<IRInstr>& instr, const CopyMap& env) {
+    // 遍历指令所有使用变量，替换成映射变量（递归替换直到不变）
+    auto uses = IRAnalyzer::getUsedVariables(instr);
+    for (auto& useVar : uses) {
+        std::string cur = useVar;
+        while (env.find(cur) != env.end()) {
+            cur = env.at(cur);
+        }
+        IRAnalyzer::replaceUsedVariable(instr, useVar, cur);
+    }
+}
+
+// 在给定指令 instr 中，将所有使用的变量名 useVar 替换为新的变量名 cur
+void IRAnalyzer::replaceUsedVariable(std::shared_ptr<IRInstr>& instr, 
+    const std::string& oldVar, 
+    const std::string& newVar) 
+{
+
+    // 1. 赋值指令
+    if (auto assign = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+        if (assign->source->type == OperandType::VARIABLE || assign->source->type == OperandType::TEMP) {
+            if (assign->source->name == oldVar) {
+                assign->source->name = newVar;
+            }
+        }
+    }
+    // 2. 二元运算指令
+    else if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+        if ((binOp->left->type == OperandType::VARIABLE || binOp->left->type == OperandType::TEMP) &&
+        binOp->left->name == oldVar) {
+            binOp->left->name = newVar;
+        }
+        if ((binOp->right->type == OperandType::VARIABLE || binOp->right->type == OperandType::TEMP) &&
+        binOp->right->name == oldVar) {
+            binOp->right->name = newVar;
+        }
+    }
+    // 3. 一元运算指令
+    else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+        if ((unaryOp->operand->type == OperandType::VARIABLE || unaryOp->operand->type == OperandType::TEMP) &&
+        unaryOp->operand->name == oldVar) {
+            unaryOp->operand->name = newVar;
+        }
+    }
+    // 4. 参数传递指令
+    else if (auto paramInstr = std::dynamic_pointer_cast<ParamInstr>(instr)) {
+        if ((paramInstr->param->type == OperandType::VARIABLE || paramInstr->param->type == OperandType::TEMP) &&
+        paramInstr->param->name == oldVar) {
+            paramInstr->param->name = newVar;
+        }
+    }
+    // 5. 函数调用指令
+    else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+        for (auto& arg : callInstr->params) {
+            if ((arg->type == OperandType::VARIABLE || arg->type == OperandType::TEMP) &&
+            arg->name == oldVar) {
+                arg->name = newVar;
+            }
+        }
+    }
+    // 6. 条件跳转指令
+    else if (auto ifg = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
+        if ((ifg->condition->type == OperandType::VARIABLE || ifg->condition->type == OperandType::TEMP) &&
+        ifg->condition->name == oldVar) {
+            ifg->condition->name = newVar;
+        }
+    }
+    // 7. 返回指令
+    else if (auto retInstr = std::dynamic_pointer_cast<ReturnInstr>(instr)) {
+        if (retInstr->value && (retInstr->value->type == OperandType::VARIABLE || retInstr->value->type == OperandType::TEMP) &&
+        retInstr->value->name == oldVar) {
+            retInstr->value->name = newVar;
+        }
+    }
+}
+
+// ---------- 构建基本块（仅用标签划分） ----------
+std::vector<std::shared_ptr<IRGenerator::BasicBlock>> IRGenerator::buildBasicBlocksByLabel() {
+    std::vector<std::shared_ptr<BasicBlock>> blocks;    // 存储生成的基本块
+    const auto& instrs = this->instructions; 
+
+    // 1. 收集所有标签指令的索引
+    std::vector<int> labelIndices;
+    for (int i = 0; i < (int)instrs.size(); ++i) {
+        if (std::dynamic_pointer_cast<LabelInstr>(instrs[i])) {
+            labelIndices.push_back(i);
+        }
+    }
+
+    // 2. 如果没有标签，强制第0条指令作为起点
+    if (labelIndices.empty() && !instrs.empty()) {
+        labelIndices.push_back(0);
+    }
+
+    // 3. 根据标签划分基本块
+    for (int i = 0; i < (int)labelIndices.size(); ++i) {
+        int start = labelIndices[i];
+        int end = (i + 1 < (int)labelIndices.size()) ? labelIndices[i+1] - 1 : (int)instrs.size() - 1;
+
+        auto block = std::make_shared<BasicBlock>();
+        block->id = (int)blocks.size();
+
+        for (int k = start; k <= end; ++k) {
+            block->instructions.push_back(instrs[k]);
+        }
+
+        // 块第一条指令必为标签
+        auto lbl = std::dynamic_pointer_cast<LabelInstr>(block->instructions.front());
+        if (lbl) {
+            block->label = lbl->label;
+        } else {
+            // 如果第一条不是标签，生成新标签并插入
+            std::string newLabel = "__block" + std::to_string(block->id);
+            auto lblInstr = std::make_shared<LabelInstr>(newLabel);
+            block->instructions.insert(block->instructions.begin(), lblInstr);
+            block->label = newLabel;
+        }
+
+        blocks.push_back(block);
+    }
+
+    return blocks;
+}
+
+
+
+/**
+ * 执行基于控制流图(CFG)的复制传播优化(Copy Propagation)
+ * 算法步骤：
+ * 1. 构建基本块和控制流图(CFG)
+ * 2. 使用worklist算法迭代计算每个基本块的in/out拷贝映射
+ * 3. 根据计算结果替换指令中的变量引用
+ */
+void IRGenerator::copyPropagationCFG() {
+    // ========== Step 1: 构建CFG ==========
+    //auto blocks = buildBasicBlocksByLabel();
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    int n = (int)blocks.size();
+    if (n == 0) return;
+
+    // ========== Step 2: 构建CFG的快速访问结构 ==========
+    std::unordered_map<int, std::vector<int>> cfg;  // blockID -> successorIDs
+    for (auto& b : blocks) {
+        std::vector<int> succIds;
+        for (auto& s : b->successors) {
+            succIds.push_back(s->id);   // 记录后继块ID
+        }
+        cfg[b->id] = std::move(succIds);
+    }
+
+    // ========== Step 3: 数据流分析初始化 =========
+    std::vector<CopyMap> inMap(n), outMap(n);   // 每个块的输入/输出拷贝映射
+    std::queue<int> q;                          // worklist队列
+    std::unordered_set<int> inQueue;            // 记录已在队列中的块
+
+    q.push(0); // 假定0为入口
+    inQueue.insert(0);
+
+    // ========== Step 4: 迭代计算in/out集合 ==========
+    while (!q.empty()) {
+        int bid = q.front();
+        q.pop();
+        inQueue.erase(bid);
+        auto blk = blocks[bid];
+
+        // 计算 inMap[bid] = meet(outMap[pred])
+        if (blk->predecessors.empty()) {
+            inMap[bid].clear();
+        } else {
+            CopyMap accum;
+            bool first = true;
+            for (auto& p : blk->predecessors) {
+                if (first) {
+                    accum = outMap[p->id];  // 第一个前驱
+                    first = false;
+                } else {
+                    // meet操作：保留所有前驱共有的拷贝关系
+                    accum = meetCopyMaps(accum, outMap[p->id]);
+                }
+            }
+            inMap[bid] = accum;
+        }
+
+        // 计算 outMap[bid] = transfer(inMap[bid], instructions)
+        CopyMap outEnv = inMap[bid];    // 从inMap初始化
+        for (auto& instr : blk->instructions) {
+            applyCopyTransfer(outEnv, instr);   // 每条指令更新拷贝关系
+        }
+
+        // 如果状态改变，更新 outMap 并加入后继块
+        if (!copyMapEqual(outEnv, outMap[bid])) {
+            outMap[bid] = std::move(outEnv);
+            // 将后继块加入worklist
+            for (auto& succ : blk->successors) {
+                if (!inQueue.count(succ->id)) {
+                    q.push(succ->id);
+                    inQueue.insert(succ->id);
+                }
+            }
+        }
+    }
+
+    // ========== Step 5: 应用复制传播 ==========
+    for (int bid = 0; bid < n; ++bid) {
+        CopyMap env = inMap[bid];   // 获取当前块的初始拷贝关系
+        auto blk = blocks[bid];
+        for (auto& instr : blk->instructions) {
+            replaceCopyUses(instr, env);    // 替换指令中的可传播变量
+            applyCopyTransfer(env, instr);  // 同步更新环境
+        }
+    }
+
+    // ========== Step 6: 重建指令序列 ==========
+    this->instructions.clear();
+    for (auto& b : blocks) {
+        for (auto& instr : b->instructions) {
+            this->instructions.push_back(instr);
+        }
+    }
+}
+
+/**
+ * 执行公共子表达式消除优化（Common Subexpression Elimination, CSE）
+ * 算法步骤：
+ * 1. 构建每个基本块的GEN和KILL集合
+ * 2. 数据流分析计算IN和OUT集合
+ * 3. 替换冗余表达式
+ */
+
+void IRGenerator::commonSubexpressionElimination() {
+    using ExprCoreSet = std::unordered_set<Expression, ExpressionHash>; // 无版本的表达式集合（用于数据流）
+    
+    // ====== 【修改1】新增：表达式值的版本化记录（仅用于替换阶段的安全校验）======
+    struct ExprValue {
+        std::string var;   // 承载该表达式结果的变量名
+        int version = -1;  // 定义该变量时的版本号
+    };
+    // 变量 -> 当前版本号；任一“定义”都会使其版本号递增
+    std::unordered_map<std::string, int> varVersion; // 【修改1】
+
+    // ====== Step 0: 构建基本块和控制流图 ======
+    auto blocks = buildBasicBlocks();
+    buildCFG(blocks);
+
+    // 全局变量名到 Operand 指针的映射（替换时用，但需要配合版本号校验）
+    std::unordered_map<std::string, std::shared_ptr<Operand>> varToOperand;
+
+    // ====== Step 1: 构建所有表达式全集（无版本） ======
+    ExprCoreSet allExprs;
+    auto norm = [](OpCode op, const std::string& a, const std::string& b) {
+        // 【修改2】抽取标准化逻辑（交换律）
+        if (op == OpCode::ADD || op == OpCode::MUL) {
+            return (b < a) ? std::pair<std::string, std::string>{b, a} : std::pair<std::string, std::string>{a, b};
+        }
+        return std::pair<std::string, std::string>{a, b};
+    };
+
+    for (auto& blk : blocks) {
+        for (auto& instr : blk->instructions) {
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (!isSideEffectInstr(instr)) {
+                    auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
+                    allExprs.insert(Expression{binOp->opcode, lhs, rhs, false});
+                }
+            }
+        }
+    }
+
+    // ====== Step 2: 计算每个块的 GEN/KILL（仍然是无版本的数据流集合） ======
+    std::unordered_map<int, ExprCoreSet> genMap, killMap;
+
+    for (auto& blk : blocks) {
+        ExprCoreSet gen;
+        std::unordered_set<std::string> definedVars;
+
+        for (auto& instr : blk->instructions) {
+            // 统一获取定义变量
+            auto defVars = IRAnalyzer::getDefinedVariables(instr); // 【沿用你的修改2】
+            for (const auto& var : defVars) {
+                if (!var.empty()) {
+                    definedVars.insert(var);
+
+                    // 同步 varToOperand（仅作指针缓存，替换时还要校验版本）
+                    if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                        if (binOp->result && binOp->result->name == var)
+                            varToOperand[var] = binOp->result;
+                    } else if (auto unaryOp = std::dynamic_pointer_cast<UnaryOpInstr>(instr)) {
+                        if (unaryOp->result && unaryOp->result->name == var)
+                            varToOperand[var] = unaryOp->result;
+                    } else if (auto assignInstr = std::dynamic_pointer_cast<AssignInstr>(instr)) {
+                        if (assignInstr->target && assignInstr->target->name == var)
+                            varToOperand[var] = assignInstr->target;
+                    } else if (auto callInstr = std::dynamic_pointer_cast<CallInstr>(instr)) {
+                        if (callInstr->result && callInstr->result->name == var)
+                            varToOperand[var] = callInstr->result;
+                    }
+                }
+            }
+
+            // GEN 仅包含 BinaryOpInstr
+            if (auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr)) {
+                if (!isSideEffectInstr(instr)) {
+                    auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
+                    gen.insert(Expression{binOp->opcode, lhs, rhs, false});
+                }
+            }
+        }
+
+        // KILL：任一操作数被定义则被杀
+        ExprCoreSet kill;
+        for (auto& e : allExprs) {
+            if (definedVars.count(e.lhs) || definedVars.count(e.rhs))
+                kill.insert(e);
+        }
+
+        genMap[blk->id]  = std::move(gen);
+        killMap[blk->id] = std::move(kill);
+    }
+
+    // ====== Step 3: 数据流分析 IN/OUT（可用表达式，仍是无版本） ======
+    std::unordered_map<int, ExprCoreSet> inMap, outMap;
+    for (auto& blk : blocks) {
+        outMap[blk->id] = allExprs;
+        inMap[blk->id] = blk->predecessors.empty() ? ExprCoreSet{} : allExprs;
+    }
+
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (auto& blk : blocks) {
+            int bid = blk->id;
+
+            // IN = ∩ OUT[pred]
+            ExprCoreSet inter;
+            if (!blk->predecessors.empty()) {
+                inter = outMap[blk->predecessors[0]->id];
+                for (size_t i = 1; i < blk->predecessors.size(); ++i) {
+                    ExprCoreSet temp;
+                    auto& outPred = outMap[blk->predecessors[i]->id];
+                    for (auto& e : inter)
+                        if (outPred.count(e)) temp.insert(e);
+                    inter = std::move(temp);
+                }
+            }
+            inMap[bid] = std::move(inter);
+
+            // OUT = GEN ∪ (IN - KILL)
+            ExprCoreSet outSet = genMap[bid];
+            for (auto& e : inMap[bid])
+                if (!killMap[bid].count(e))
+                    outSet.insert(e);
+
+            if (outSet != outMap[bid]) {
+                outMap[bid] = std::move(outSet);
+                changed = true;
+            }
+        }
+    }
+
+    // ====== Step 4: 替换公共子表达式（版本号安全） ======
+    for (auto& blk : blocks) {
+        // 可用表达式（无版本集合）
+        ExprCoreSet available = inMap[blk->id];
+
+        // 【修改3】新增：块内“表达式 -> {产出变量, 版本}”映射。
+        // 注意：我们只信任块内出现过的定义（避免跨块版本不一致）
+        std::unordered_map<Expression, ExprValue, ExpressionHash> exprToVal; // 【修改3】
+
+        // 【修改4】新增：块内初始化变量版本（扫描块内出现的所有变量，初始为0）
+        // 为简洁起见，如果项目里已有符号表/活跃信息，可替换为真实初值。
+        auto initVar = [&](const std::string& v) {
+            if (!v.empty() && !varVersion.count(v)) varVersion[v] = 0;
+        };
+
+        for (auto& instr : blk->instructions) {
+            // 预初始化出现过的变量名（use/def都初始化）
+            for (auto& u : IRAnalyzer::getUsedVariables(instr)) initVar(u);   // 【修改4】需要你已有 getUsedVariables
+            for (auto& d : IRAnalyzer::getDefinedVariables(instr)) initVar(d);
+        }
+
+        // 按索引遍历，便于就地替换
+        for (size_t i = 0; i < blk->instructions.size(); ++i) {
+            auto instr = blk->instructions[i];
+
+            // 【修改5】先处理“多定义”KILL再做插入：保证顺序安全
+            // 但对当前指令，是“准备定义”，尚未生效；真正KILL放在本条指令生效时机（见下方）。
+
+            // 仅对 BinaryOp 考虑CSE
+            auto binOp = std::dynamic_pointer_cast<BinaryOpInstr>(instr);
+            if (!binOp || isSideEffectInstr(instr)) {
+                // 对有副作用或非二元运算，若有定义，仍需更新版本和KILL
+                auto defVars = IRAnalyzer::getDefinedVariables(instr);
+                for (const auto& defVar : defVars) {
+                    // 本条指令定义生效：先版本+1，再KILL依赖表达式
+                    ++varVersion[defVar]; // 【修改6】任何定义都会产生新版本
+                    for (auto it = available.begin(); it != available.end();) {
+                        if (it->lhs == defVar || it->rhs == defVar) {
+                            exprToVal.erase(*it);
+                            it = available.erase(it);
+                        } else ++it;
+                    }
+                }
+                continue;
+            }
+
+            // 标准化表达式（无版本）
+            auto [lhs, rhs] = norm(binOp->opcode, binOp->left->name, binOp->right->name);
+            Expression e{binOp->opcode, lhs, rhs, false};
+
+            // 【修改7】仅当：
+            //  1) e 在 available（数据流可用）
+            //  2) 我们在“块内”有 e 的产生者记录（exprToVal）
+            //  3) 该产生者变量的当前版本 == 记录版本（未被重定义）
+            //  4) 能拿到该变量的 Operand
+            // 才进行替换（避免跨块旧值/错误版本）
+            bool canReplace = false;
+            std::shared_ptr<Operand> replOperand;
+
+            if (available.count(e)) {
+                auto itVal = exprToVal.find(e);
+                if (itVal != exprToVal.end()) {
+                    const ExprValue& ev = itVal->second;
+                    auto itOp = varToOperand.find(ev.var);
+                    if (itOp != varToOperand.end()) {
+                        auto curVerIt = varVersion.find(ev.var);
+                        if (curVerIt != varVersion.end() && curVerIt->second == ev.version) {
+                            canReplace = true;
+                            replOperand = itOp->second;
+                        }
+                    }
+                }
+            }
+
+            // 根据是否可替换，生成最终指令
+            const std::string defVar = binOp->result ? binOp->result->name : std::string{};
+            if (canReplace && replOperand) {
+                blk->instructions[i] = std::make_shared<AssignInstr>(binOp->result, replOperand);
+                // 即使替换也要更新版本和操作数映射
+                if (!defVar.empty()) {
+                    ++varVersion[defVar];
+                    varToOperand[defVar] = binOp->result;
+                }
+                continue;  // 跳过后续的GEN操作（因为替换为赋值不产生新表达式）
+            } else {
+                // 不替换，保留原二元运算
+                // 同时，把 e 记作“块内可复用”的值（但要在定义生效后写入版本）
+            }
+
+            // ===== 当前指令的“定义”生效：更新版本号 + KILL 依赖表达式 =====
+            if (!defVar.empty()) {
+                ++varVersion[defVar]; // 【修改6】定义生效 -> 版本递增
+                // KILL 所有引用 defVar 的可用表达式
+                for (auto it = available.begin(); it != available.end();) {
+                    if (it->lhs == defVar || it->rhs == defVar) {
+                        exprToVal.erase(*it);
+                        it = available.erase(it);
+                    } else ++it;
+                }
+                // 同步 varToOperand（无论替换与否）
+                //varToOperand[defVar] = (blk->instructions[i]->getResultOperand()); // 【修改8】要求这些IR类有统一接口
+                varToOperand[defVar] = (binOp->result); 
+            }
+
+            // ===== 在完成“定义生效 & KILL”之后，再把当前表达式加入 available / exprToVal =====
+            // （这样就不会出现“先插入后又被KILL掉”的顺序问题）
+            if (!defVar.empty()) {
+                // 当前表达式在本位置产生的值（无论是否替换，结果都定义为 defVar）
+                exprToVal[e] = ExprValue{defVar, varVersion[defVar]}; // 【修改9】记录产出变量及其版本
+                available.insert(e);
+            }
+        }
+    }
+
+    // ====== Step 5: 重建指令序列 ======
+    this->instructions.clear();
+    for (auto& blk : blocks)
+        for (auto& instr : blk->instructions)
+            this->instructions.push_back(instr);
+}
+
+
+
+
+
 /**
  * 执行控制流优化（Control Flow Optimization）
  * 主要包含四个优化阶段：
@@ -1773,136 +2226,6 @@ bool IRGenerator::isSideEffectInstr(const std::shared_ptr<IRInstr>& instr) {
  * 3. 删除多余跳转
  * 4. 重新线性化指令
  */
-/*void IRGenerator::controlFlowOptimization() {
-
-    // 构建基本块和控制流图
-    auto blocks = buildBasicBlocks();
-    buildCFG(blocks);
-
-    if (blocks.empty()) return;
-
-    // ==== Step 1: 删除不可达基本块 ====
-    std::unordered_set<std::shared_ptr<BasicBlock>> reachable;  // 可达基本块集合
-    std::function<void(std::shared_ptr<BasicBlock>)> dfs =
-        [&](std::shared_ptr<BasicBlock> blk) {
-            // 跳过空块或已访问块
-            if (!blk || reachable.count(blk)) return;
-            reachable.insert(blk);  // 标记当前块为可达
-            // 递归遍历所有后继块
-            for (auto& succ : blk->successors) {
-                dfs(succ);
-            }
-        };
-
-    // 从入口块开始深度优先遍历
-    dfs(blocks.front());    // 假设第一个基本块是入口块
-
-    // 过滤掉不可达的基本块
-    std::vector<std::shared_ptr<BasicBlock>> newBlocks;
-    for (auto& blk : blocks) {
-        if (reachable.count(blk)) {
-            newBlocks.push_back(blk);
-        }
-    }
-    blocks.swap(newBlocks); // 更新基本块列表
-
-    // ==== Step 2: 合并直连基本块 ====
-    std::unordered_set<std::shared_ptr<BasicBlock>> toRemove;    // 待删除块
-    for (auto& blk : blocks) {
-        if (blk->instructions.empty()) continue;    // 跳过空块
-
-        // 检查最后一条指令是否为goto
-        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-            // 获取唯一后继块（当前块必须有且仅有一个后继）
-            auto target = blk->successors.size() == 1 ? blk->successors[0] : nullptr;
-            
-            // 满足合并条件：后继块有且仅有一个前驱（即当前块）
-            if (target && target->predecessors.size() == 1) {
-                blk->instructions.pop_back();  // 删除跳转指令
-
-                // 保留目标块首指令标签（如果有）
-                if (!target->instructions.empty()) {
-                    auto firstInstr = target->instructions.front();
-                    if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(firstInstr)) {
-                        blk->instructions.push_back(labelInstr);    // 保留标签
-                        // 合并剩余指令
-                        blk->instructions.insert(
-                            blk->instructions.end(),
-                            target->instructions.begin() + 1,
-                            target->instructions.end()
-                        );
-                    } else {
-                        // 无标签则全合并
-                        blk->instructions.insert(
-                            blk->instructions.end(),
-                            target->instructions.begin(),
-                            target->instructions.end()
-                        );
-                    }
-                }
-
-                // 更新 CFG
-                blk->successors = target->successors;
-
-                // 更新后继块的前驱指向当前块
-                for (auto& succ : target->successors) {
-                    for (auto& pred : succ->predecessors) {
-                        if (pred == target) {
-                            pred = blk;
-                        }
-                    }
-                }
-                toRemove.insert(target);
-            }
-        }
-    }
-
-    // 删除合并掉的块
-    blocks.erase(
-        std::remove_if(blocks.begin(), blocks.end(),
-            [&](const std::shared_ptr<BasicBlock>& b) { return toRemove.count(b); }),
-        blocks.end()
-    );
-
-    // ==== Step 3: 删除多余跳转 ====
-    for (size_t i = 0; i + 1 < blocks.size(); ++i) {
-        auto& blk = blocks[i];
-        if (blk->instructions.empty()) continue;
-
-        // 检查最后一条指令是否为跳转
-        if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(blk->instructions.back())) {
-            auto& nextBlk = blocks[i + 1];  // 物理相邻的下一个块
-
-            // 确认 nextBlk 的第一个指令是标签
-            if (!nextBlk->instructions.empty()) {
-                if (auto labelInstr = std::dynamic_pointer_cast<LabelInstr>(nextBlk->instructions.front())) {
-                    // 如果跳转目标就是下一个块，则删除冗余跳转
-                    if (gotoInstr->target && gotoInstr->target->name == labelInstr->label) {
-                        blk->instructions.pop_back();    // 删除跳转指令
-                    }
-                }
-            }
-        }
-    }
-
-    // ==== Step 4: 重新线性化指令 ====
-    instructions.clear();   // 清空原始指令序列
-    std::unordered_set<std::shared_ptr<BasicBlock>> visited;
-
-    // 深度优先遍历按控制流顺序重组指令
-    std::function<void(std::shared_ptr<BasicBlock>)> dfsLinearize = [&](std::shared_ptr<BasicBlock> blk) {
-        if (!blk || visited.count(blk)) return;
-        visited.insert(blk);
-        // 添加当前块指令
-        instructions.insert(instructions.end(), blk->instructions.begin(), blk->instructions.end());
-        // 递归处理后继
-        for (auto& succ : blk->successors) {
-            dfsLinearize(succ);
-        }
-    };
-
-    dfsLinearize(blocks.front());   // 从入口块开始重组
-}*/
 
 // 辅助：更新所有跳转指令目标标签，fromLabel -> toLabel
 void IRGenerator::updateJumpTargets(
@@ -2183,10 +2506,6 @@ void IRGenerator::controlFlowOptimization() {
     }
 }
 
-
-
-
-
 /**
  * 控制流优化。
  * 
@@ -2194,217 +2513,6 @@ void IRGenerator::controlFlowOptimization() {
  * 例如，消除冗余跳转，优化分支条件，
  * 简化控制流模式。
  */
-/*void IRGenerator::controlFlowOptimization() {
-    bool changed = true;
-    
-    while (changed) {
-        changed = false;
-        
-        // 构建控制流图
-        auto cfg = buildControlFlowGraph();
-        
-        // 优化跳转到跳转（跳转链）
-        for (size_t i = 0; i < instructions.size(); ++i) {
-            auto instr = instructions[i];
-            
-            // 如果这是一个跳转指令
-            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instr)) {
-                std::string targetLabel = gotoInstr->target->name;
-                
-                // 查找目标块
-                if (cfg.find(targetLabel) != cfg.end()) {
-                    auto& targetBlock = cfg[targetLabel];
-                    
-                    // 如果目标块只包含另一个跳转，绕过它
-                    if (targetBlock.instructionIndices.size() == 1) {
-                        auto targetInstr = instructions[targetBlock.instructionIndices[0]];
-                        if (auto targetGoto = std::dynamic_pointer_cast<GotoInstr>(targetInstr)) {
-                            // 将此跳转替换为跳转到最终目标
-                            gotoInstr->target = targetGoto->target;
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            
-            // 如果这是一个条件跳转指令
-            else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
-                // 如果条件是常量，我们可以简化
-                if (ifGotoInstr->condition->type == OperandType::CONSTANT) {
-                    if (ifGotoInstr->condition->value != 0) {
-                        // 始终为真条件 - 替换为无条件跳转
-                        instructions[i] = std::make_shared<GotoInstr>(ifGotoInstr->target);
-                        changed = true;
-                    } else {
-                        // 始终为假条件 - 删除跳转
-                        // 我们将在死代码消除中处理
-                        // 现在，只是替换为空操作（自我赋值）
-                        auto noop = std::make_shared<AssignInstr>(
-                            std::make_shared<Operand>(OperandType::TEMP, "noop"),
-                            std::make_shared<Operand>(OperandType::TEMP, "noop")
-                        );
-                        instructions[i] = noop;
-                        changed = true;
-                    }
-                }
-            }
-        }
-        
-        // 如果我们做了更改，再次运行死代码消除
-        if (changed) {
-            deadCodeElimination();
-        }
-    }
-}*/
-
-/**
- * 检查指令是否是控制流指令。
- * 
- * 控制流指令改变执行流程，如跳转和返回。
- * 
- * @param instr 要检查的指令
- * @return 如果指令是控制流指令，则为true
- */
-/*bool IRGenerator::isControlFlowInstruction(const std::shared_ptr<IRInstr>& instr) const {
-    return std::dynamic_pointer_cast<GotoInstr>(instr) != nullptr ||
-           std::dynamic_pointer_cast<IfGotoInstr>(instr) != nullptr ||
-           std::dynamic_pointer_cast<ReturnInstr>(instr) != nullptr;
-}*/
-
-/**
- * 获取控制流指令的目标标签。
- * 
- * @param instr 控制流指令
- * @return 目标标签名的向量
- */
-/*std::vector<std::string> IRGenerator::getControlFlowTargets(const std::shared_ptr<IRInstr>& instr) const {
-    std::vector<std::string> targets;
-    
-    if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(instr)) {
-        targets.push_back(gotoInstr->target->name);
-    }
-    else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(instr)) {
-        targets.push_back(ifGotoInstr->target->name);
-    }
-    
-    return targets;
-}*/
-
-/**
- * 从IR指令构建控制流图。
- * 
- * 控制流图表示程序中的执行流程。
- * 每个节点（基本块）是按顺序执行的一系列指令，
- * 边表示块之间可能的控制流。
- * 
- * @return 从标签名到基本块的映射
- */
-/*std::map<std::string, IRGenerator::BasicBlock> IRGenerator::buildControlFlowGraph() {
-    std::map<std::string, BasicBlock> blocks;
-    
-    // 寻找所有标签和控制流指令
-    std::vector<int> leaders; // 基本块的起始指令索引
-    
-    // 第一条指令总是一个leader
-    if (!instructions.empty()) {
-        leaders.push_back(0);
-    }
-    
-    // 标记所有标签指令和控制流指令之后的指令为leader
-    for (size_t i = 0; i < instructions.size(); ++i) {
-        // 如果是标签，则标签本身是leader
-        if (std::dynamic_pointer_cast<LabelInstr>(instructions[i])) {
-            leaders.push_back(i);
-        }
-        // 如果是控制流指令，则下一条指令是leader
-        else if (isControlFlowInstruction(instructions[i]) && i + 1 < instructions.size()) {
-            leaders.push_back(i + 1);
-        }
-    }
-    
-    // 去重并排序leaders
-    std::sort(leaders.begin(), leaders.end());
-    leaders.erase(std::unique(leaders.begin(), leaders.end()), leaders.end());
-    
-    // 创建基本块
-    for (size_t i = 0; i < leaders.size(); ++i) {
-        int start = leaders[i];
-        int end = (i + 1 < leaders.size()) ? leaders[i + 1] - 1 : instructions.size() - 1;
-        
-        // 找到块的标签
-        std::string blockLabel;
-        if (std::dynamic_pointer_cast<LabelInstr>(instructions[start])) {
-            blockLabel = std::dynamic_pointer_cast<LabelInstr>(instructions[start])->label;
-        } else {
-            blockLabel = "block_" + std::to_string(start);
-        }
-        
-        // 创建基本块
-        BasicBlock block;
-        block.label = blockLabel;
-        
-        // 添加指令索引
-        for (int j = start; j <= end; ++j) {
-            block.instructionIndices.push_back(j);
-        }
-        
-        blocks[blockLabel] = block;
-    }
-    
-    // 添加基本块之间的边
-    for (auto& [label, block] : blocks) {
-        // 获取块的最后一条指令
-        if (!block.instructionIndices.empty()) {
-            int lastInstrIndex = block.instructionIndices.back();
-            auto lastInstr = instructions[lastInstrIndex];
-            
-            // 如果是控制流指令，添加相应的边
-            if (auto gotoInstr = std::dynamic_pointer_cast<GotoInstr>(lastInstr)) {
-                block.successors.push_back(gotoInstr->target->name);
-            }
-            else if (auto ifGotoInstr = std::dynamic_pointer_cast<IfGotoInstr>(lastInstr)) {
-                // 条件为真时跳转
-                block.successors.push_back(ifGotoInstr->target->name);
-                
-                // 条件为假时继续执行下一个基本块
-                if (lastInstrIndex + 1 < instructions.size()) {
-                    // 找到下一个基本块
-                    for (auto& [nextLabel, nextBlock] : blocks) {
-                        if (!nextBlock.instructionIndices.empty() && 
-                            nextBlock.instructionIndices.front() == lastInstrIndex + 1) {
-                            block.successors.push_back(nextLabel);
-                            break;
-                        }
-                    }
-                }
-            }
-            else if (std::dynamic_pointer_cast<ReturnInstr>(lastInstr)) {
-                // 返回指令没有后继
-            }
-            else if (lastInstrIndex + 1 < instructions.size()) {
-                // 非控制流指令，继续执行下一个基本块
-                for (auto& [nextLabel, nextBlock] : blocks) {
-                    if (!nextBlock.instructionIndices.empty() && 
-                        nextBlock.instructionIndices.front() == lastInstrIndex + 1) {
-                        block.successors.push_back(nextLabel);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-    
-    // 计算前驱
-    for (auto& [label, block] : blocks) {
-        for (const auto& succ : block.successors) {
-            if (blocks.find(succ) != blocks.end()) {
-                blocks[succ].predecessors.push_back(label);
-            }
-        }
-    }
-    
-    return blocks;
-}*/
 
 //------------------------------------------------------------------------------
 // AST访问者方法（表达式节点）
@@ -2682,7 +2790,6 @@ void IRGenerator::visit(ExprStmt& stmt) {
         addInstruction(std::make_shared<AssignInstr>(var, value));
     }
 }*/
-//---------------------------修改7-----------------------------
 void IRGenerator::visit(VarDeclStmt& stmt) {
     // 关键修改：使用 createInCurrentScope = true，强制在当前作用域创建新变量
     std::shared_ptr<Operand> var = getVariable(stmt.name, true);
@@ -2694,7 +2801,7 @@ void IRGenerator::visit(VarDeclStmt& stmt) {
         addInstruction(std::make_shared<AssignInstr>(var, value));
     }
 }
-//---------------------------修改7-----------------------------
+
 /**
  * 访问赋值语句。
  * 
@@ -2907,15 +3014,14 @@ void IRGenerator::visit(FunctionDef& funcDef) {
     // for (const auto& param : funcDef.params) {
     //    getVariable(param.name); // 确保参数变量被创建
     // }
-    
-//--------------------------修改7----------------------------
+
     // 函数参数处理 - 关键修改：使用 createInCurrentScope = false
     for (const auto& param : funcDef.params) {
         // 对于函数参数，使用 createInCurrentScope = false，
         // 这样会使用原始名称，不会生成唯一标识符
         getVariable(param.name, false);  // 改为 false！
     }
-//--------------------------修改7-----------------------------
+
 
     // 函数体
     funcDef.body->accept(*this);

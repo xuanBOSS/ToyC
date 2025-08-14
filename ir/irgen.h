@@ -117,7 +117,7 @@ public:
 private:
     // 获取或创建变量操作数
     //std::shared_ptr<Operand> getVariable(const std::string& name);
-//-----------------------修改7--------------------------
+
     std::shared_ptr<Operand> getVariable(const std::string& name, bool createInCurrentScope = false);
 
     int scopeDepth = 0;  // 当前作用域深度
@@ -126,7 +126,7 @@ private:
     std::string getScopedVariableName(const std::string& name) {
         return name + "_scope" + std::to_string(scopeDepth);
     }
-//-----------------------修改7--------------------------
+
     // 作用域管理
     void enterScope();
     void exitScope();
@@ -145,6 +145,7 @@ private:
     //void constantPropagation();    // 常量传播
     void constantPropagationCFG();   // 常量传播
     void deadCodeElimination();    // 死代码删除
+    void copyPropagationCFG();      // 复制传播优化
     void controlFlowOptimization();// 控制流优化
 
     // 判断指令是否具有副作用
@@ -183,6 +184,9 @@ private:
     // 构建基本快
     std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocks();
 
+    // 执复制传播时仅通过标签划分基本块
+    std::vector<std::shared_ptr<BasicBlock>> buildBasicBlocksByLabel();
+
     // 获取循环体内定义的所有变量集合（循环定义变量分析）
     /*std::unordered_set<std::string> getLoopDefs(
         const std::unordered_map<BlockID, std::vector<BlockID>>& cfg,
@@ -209,6 +213,59 @@ private:
 
     // 校验 CFG 有效性
     bool validateCFG(const std::vector<std::shared_ptr<BasicBlock>>& blocks);
+
+    struct Expression {
+        OpCode op;
+        std::string lhs;
+        std::string rhs;
+        bool someFlag;       
+
+        bool operator==(const Expression& other) const {
+            return op == other.op &&
+                lhs == other.lhs &&
+                rhs == other.rhs &&
+                someFlag == other.someFlag;
+        }
+    };
+    
+    struct ExpressionHash {
+        std::size_t operator()(const Expression& e) const {
+
+            std::string op;
+            switch (e.op) {
+                case OpCode::ADD: op = "ADD";
+                case OpCode::SUB: op = "SUB";
+                case OpCode::MUL: op = "MUL";
+                case OpCode::DIV: op = "DIV";
+                case OpCode::MOD: op = "MOD";
+                case OpCode::NEG: op = "NEG";
+                case OpCode::NOT: op = "NOT";
+                case OpCode::LT:  op = "LT";
+                case OpCode::GT:  op = "GT";
+                case OpCode::LE:  op = "LE";
+                case OpCode::GE:  op = "GE";
+                case OpCode::EQ:  op = "EQ";
+                case OpCode::NE:  op = "NE";
+                case OpCode::AND: op = "AND";
+                case OpCode::OR:  op = "OR";
+                case OpCode::ASSIGN: op = "ASSIGN";
+                case OpCode::GOTO: op = "GOTO";
+                case OpCode::IF_GOTO: op = "IF_GOTO";
+                case OpCode::PARAM: op = "PARAM";
+                case OpCode::CALL: op = "CALL";
+                case OpCode::RETURN: op = "RETURN";
+                case OpCode::LABEL: op = "LABEL";
+                case OpCode::FUNCTION_BEGIN: op = "FUNCTION_BEGIN";
+                case OpCode::FUNCTION_END: op = "FUNCTION_END";
+                default: op = "UNKNOWN_OP";
+            }
+
+            return std::hash<std::string>()(op + "|" + e.lhs + "|" + e.rhs);
+        }
+    };
+    
+    // 公共子表达式消除
+    void commonSubexpressionElimination();
     
     // 构建控制流图
     //std::map<std::string, BasicBlock> buildControlFlowGraph();
